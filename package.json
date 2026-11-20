@@ -15,7 +15,7 @@
     "dev": "concurrently -n web,api,worker \"npm run dev -w @leaguelens/frontend\" \"npm run dev:api -w @leaguelens/backend\" \"npm run dev:worker -w @leaguelens/backend\"",
     "codegen": "graphql-codegen --config codegen.yml",
     "build": "npm run codegen && npm run build -w @leaguelens/shared && npm run build -w @leaguelens/backend && npm run build -w @leaguelens/frontend",
-    "typecheck": "npm run codegen && npm run typecheck --workspaces --if-present",
+    "typecheck": "npm run codegen && npm run build -w @leaguelens/shared && npm run typecheck --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "format": "prettier --write \"frontend/src/**/*.{ts,tsx,css}\" \"backend/src/**/*.ts\" \"packages/shared/src/**/*.ts\" \"*.json\" \"frontend/*.json\" \"backend/*.json\" \"packages/shared/*.json\"",
