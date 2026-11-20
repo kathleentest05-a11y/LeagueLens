@@ -3,11 +3,12 @@
 | Field | Value |
 | --- | --- |
 | Product | LeagueLens |
-| Document status | Draft v0.1 |
+| Document status | Draft v0.3 |
+| Companion doc | [docs/TDD.md](/home/kathleen/code/LeagueLens/docs/TDD.md) (technical design: frontend, GraphQL schema, data model, system architecture, Sleeper rate limiting/caching, secrets, deployment) |
 | Last updated | 2026-11-20 |
 | Owner | Kathleen |
 | Build type | Portfolio / demo build (full-stack showcase) |
-| Stack | React, Next.js, Tailwind CSS, Node.js, GraphQL, Google Cloud |
+| Stack | React, Next.js, MUI (Material UI), Tailwind CSS, Node.js, GraphQL, Docker (cloud-ready; no cloud deployment in MVP) |
 
 ## 1. Overview
 
@@ -47,14 +48,14 @@ The pain peaks when seasons overlap (for example, NFL Sundays during the NBA reg
 - **G1.** Show all of a manager's teams across sports in one dashboard within 60 seconds of sign-up.
 - **G2.** Surface cross-league problems proactively: lineup-lock warnings, injured/inactive starters, and bye-week starters.
 - **G3.** Support managers without API access by importing offline leagues from CSV.
-- **G4.** Demonstrate a production-shaped full-stack architecture: Next.js front end, Node + GraphQL API, and a Google Cloud deployment with background sync jobs.
+- **G4.** Demonstrate a production-shaped full-stack architecture: Next.js front end, Node + GraphQL API, and background sync jobs — runnable locally with Docker and designed cloud-ready (see TDD), without requiring a paid cloud deployment for the MVP.
 
 ### 3.2 Non-goals (MVP)
 
 - Writing back to any provider (no setting lineups, add/drop, or trades on Sleeper).
 - Hosting leagues, scoring games, or running drafts.
 - Real-money features, wagering, or daily fantasy (DFS) lineup building.
-- Monetization, billing, or tiered plans (this is a portfolio build).
+- Monetization, billing, or tiered plans (this is a portfolio build; Sleeper's API terms also restrict use to non-commercial purposes without a commercial license — see Section 6.3).
 - Native mobile apps (responsive web only).
 
 ## 4. Target users
@@ -101,10 +102,11 @@ The pain peaks when seasons overlap (for example, NFL Sundays during the NBA reg
 - Team detail: roster (starters/bench/IR), player injury status, standings.
 - Smart alerts: lineup-lock countdown, injured/inactive starter, bye-week starter, empty starter slot.
 - Background sync of Sleeper data with visible "last synced" timestamps.
-- Deployed on Google Cloud with a public demo URL and seeded demo mode.
+- Runnable locally via Docker Compose with seeded demo mode; cloud deployment is out of MVP scope (cloud-ready design only — Section 12 summary, TDD Section 10).
 
 ### 5.2 Post-MVP (v1.x)
 
+- Hosted cloud deployment with a public demo URL (requires budget approval; MVP is local-only but cloud-ready — Section 12).
 - Additional providers: ESPN and Yahoo (deferred — see Section 6.4).
 - Player news feed and trending adds/drops across the manager's leagues.
 - Weekly digest email and push notifications.
@@ -116,7 +118,7 @@ The pain peaks when seasons overlap (for example, NFL Sundays during the NBA reg
 - Trade analyzer and AI-assisted lineup optimization (the "manager copilot" tier).
 - Commissioner tools: shareable standings pages, CSV export of results.
 - Social layer: league activity feed, smack-talk-safe sharing cards.
-- Freemium monetization, if the project graduates from portfolio piece to product.
+- Monetization only if the licensing picture changes: Sleeper's API is free for non-commercial use only (Section 6.3), so any freemium, paid tier, or ad-supported model that serves Sleeper data requires a commercial license from Sleeper first. Until then LeagueLens stays free.
 
 ## 6. Provider integration strategy
 
@@ -137,19 +139,30 @@ Every provider — including CSV — implements the same internal adapter contra
 - `getLeagueBundle(leagueId)` → league settings, members, rosters, matchups, standings.
 - `getPlayers(sport)` → normalized player directory (cached; refreshed on a schedule).
 
-All providers normalize into the shared data model in Section 10. Adding ESPN or Yahoo later means writing one new adapter — no schema or UI rewrite.
+All providers normalize into the shared data model in the TDD (summarized in Section 10). Adding ESPN or Yahoo later means writing one new adapter — no schema or UI rewrite.
 
 ### 6.3 Sleeper (MVP provider)
 
-- **API:** Public REST, `https://api.sleeper.app/v1`, no authentication; stay under ~1,000 calls/minute.
-- **Connect flow:** User enters their Sleeper username → `GET /user/{username}` resolves the `user_id` → `GET /user/{user_id}/leagues/{sport}/{season}` enumerates leagues per supported sport and the current season → the user's own roster in each league is the one whose `owner_id` matches.
+- **API:** Public read-only REST, `https://api.sleeper.app/v1`, no authentication or API token. Source: [Sleeper API docs](https://docs.sleeper.com/#introduction).
+- **Licensing (non-commercial only).** Sleeper documents the API as "free to use for non-commercial purposes," with commercial use requiring a separate licensing discussion with Sleeper. LeagueLens is therefore a free, non-commercial build. No paid tier, billing, or advertising may be introduced on top of Sleeper data without first securing that license (see Sections 3.2 and 5.3).
+- **Rate limit.** Sleeper's guidance is to stay under 1,000 API calls per minute or risk an IP block. The limit applies per source IP, so every LeagueLens user's sync shares the backend's egress budget. As a product rule, the browser never calls Sleeper directly and shared data (notably the player directory) is fetched once on the server, never once per user. Limiter and cache mechanics live in the technical design doc ([docs/TDD.md](/home/kathleen/code/LeagueLens/docs/TDD.md)).
+- **Connect flow:** User enters their Sleeper username → `GET /user/{username}` resolves the `user_id` → `GET /user/{user_id}/leagues/{sport}/{season}` enumerates leagues per supported sport and the current season → the user's own roster in each league is the one whose `owner_id` matches. Usernames can change over time, so LeagueLens stores the resolved `user_id` and treats the username as a lookup handle only.
 - **Data used:** `/league/{league_id}` (settings, scoring), `/league/{league_id}/rosters`, `/league/{league_id}/users`, `/league/{league_id}/matchups/{week}`, `/players/{sport}` (player directory with injury status), `/state/{sport}` (current week/season phase).
-- **Sync policy:** Player directory daily; leagues/rosters/matchups every 15 minutes during active game windows, hourly otherwise. Every sync is cached server-side; the UI always reads our database, never Sleeper directly.
+- **Sync policy (product commitment):** Player directory daily; leagues/rosters/matchups every 15 minutes during active game windows, hourly otherwise. Data is cached server-side and the UI always reads LeagueLens' store, never Sleeper directly. Manual refresh is throttled per league so users cannot exhaust the shared rate budget.
 - **Limits to design around:** League lists are per sport and season (handled by the fan-out in 6.1); unknown IDs can return a literal `null` body; data is read-only by design.
 
-### 6.4 ESPN and Yahoo (deferred)
+### 6.4 ESPN and Yahoo (deferred — out of MVP scope)
 
-Documented as future adapters. Known blockers: OAuth/private-league auth complexity, unofficial or partner-gated endpoints, and per-user token storage. No MVP UI may promise these providers beyond a disabled "Coming soon" affordance.
+Both providers are designed for (Section 6.2) but not built in the MVP. No MVP UI may promise them beyond a disabled "Coming soon" affordance. Findings recorded 2026-11-20:
+
+**Yahoo Fantasy.** The Yahoo Fantasy Sports API requires a registered developer application (consumer key/secret via the [Yahoo developer portal](https://developer.yahoo.com/)) and per-user OAuth 2.0 consent. An existing personal key does not remove the per-user consent flow. Yahoo access tokens are short-lived (about one hour) and require refresh-token storage and upkeep per LeagueLens user. That combination — app review/registration, OAuth redirect handling, and token lifecycle — is out of scope for the MVP. A future Yahoo adapter may revisit it once the Sleeper path is proven.
+
+**ESPN Fantasy.** ESPN has no official public Fantasy API or OAuth flow. The available route is an undocumented internal API documented by the community (see the [Public ESPN Fantasy API docs](https://github.com/pseudo-r/Public-ESPN-Fantasy-API), including its [authentication notes](https://github.com/pseudo-r/Public-ESPN-Fantasy-API/blob/main/docs/authentication.md)). Two blockers keep it out of the MVP:
+
+1. **No user-based discovery.** The API is league-scoped, not user-scoped. There is no equivalent of Sleeper's username → `user_id` → all leagues lookup, so LeagueLens cannot auto-discover "every ESPN league this user is in." Enumerating public league IDs is not a sustainable or permissible substitute. Even for public leagues (which need no auth), the user would have to supply each `leagueId`, season, and sport by hand. That breaks the Section 6.1 promise that one connection surfaces all leagues.
+2. **Private leagues need browser session cookies.** Private leagues require the user's `espn_s2` session token and `SWID` cookie, copied out of the browser's dev tools. There is no OAuth alternative. Asking users to extract cookies is poor onboarding, those cookies are account-equivalent secrets LeagueLens would have to store and refresh, and they rotate on password change or session expiry. Coupled with an undocumented API that can change without notice, that is too fragile a foundation for the MVP.
+
+A future ESPN spike, if pursued, should start with public leagues via user-supplied league IDs and must resolve discovery and token storage before any "connect ESPN" promise reaches the UI.
 
 ### 6.5 CSV import (offline leagues)
 
@@ -178,7 +191,7 @@ Priority key: **Must** = required for MVP launch · **Should** = MVP if time all
 | --- | --- | --- |
 | FR-2.1 | Connecting Sleeper requires only a username; LeagueLens discovers all leagues for the current season across supported sports and imports the user's own team in each. | Must |
 | FR-2.2 | Invalid usernames and zero-league accounts produce specific, recoverable error states (not a generic failure). | Must |
-| FR-2.3 | A background job re-syncs provider data on the Section 6.3 schedule; users can also trigger a manual refresh per league. | Must |
+| FR-2.3 | A background job re-syncs provider data on the Section 6.3 schedule; users can also trigger a manual refresh per league, subject to a per-league cooldown that protects the shared provider rate budget (the UI shows when a refresh is available again). | Must |
 | FR-2.4 | Every league surface shows its "last synced" time; stale data (>1 hour in a game window) is visibly badged, never silently presented as fresh. | Must |
 | FR-2.5 | Provider outages degrade gracefully: cached data remains readable and the UI shows a "provider unavailable" notice. | Must |
 
@@ -257,7 +270,7 @@ LeagueLens
 ### 8.3 Design requirements
 
 - Mobile-first responsive layouts; the dashboard must be fully usable at 375px width.
-- Dark-mode-friendly Tailwind theme; sport and alert severity are never encoded by color alone (always paired with a label or icon).
+- Dark-mode-friendly MUI theme (Tailwind for layout); sport and alert severity are never encoded by color alone (always paired with a label or icon).
 - Loading skeletons for sync-backed views; optimistic UI only for local actions (filters, mutes), never for provider data.
 - Accessibility: semantic landmarks, keyboard-navigable tables/cards, visible focus states, WCAG 2.1 AA contrast.
 
@@ -281,116 +294,36 @@ Rules:
 - **CSV parity.** CSV leagues evaluate the same rules against imported/manual statuses, minus live lock timing (lock alerts use the sport's typical weekly lock only if the CSV provides a game time; otherwise they are suppressed and replaced with a static "check your lineup" reminder state).
 - Every alert renders *why* it fired, *which slot*, and *what to do* ("Bench Player X — open Sleeper to fix"), with a deep link to the team page.
 
-## 10. Data model (conceptual)
+## 10. Data (summary)
 
-Provider payloads are normalized into these entities; provider-specific IDs are kept as external references, never as primary keys.
+LeagueLens stores a normalized, provider-independent view of each user's leagues, teams, players, matchups, and alerts, plus an audit trail for CSV imports. Provider accounts link to LeagueLens accounts without ever storing a provider password, and re-syncing or re-importing updates the same records instead of duplicating them, so alert history survives refreshes. The full entity model, identity/upsert rules, and storage design live in the technical design doc ([docs/TDD.md](/home/kathleen/code/LeagueLens/docs/TDD.md)).
 
-| Entity | Key fields | Notes |
-| --- | --- | --- |
-| `User` | id, email, displayName, authProvider | LeagueLens account (Firebase Auth identity). |
-| `ProviderConnection` | id, userId, provider (`sleeper` \| `csv`), externalUserId, handle, status, lastSyncAt | One row per connected provider or CSV source. |
-| `League` | id, connectionId, externalLeagueId?, name, sport, season, scoringSettings (JSON), source | `source` mirrors the provider for filtering and labeling. |
-| `Team` | id, leagueId, externalRosterId?, ownerName, teamName, wins, losses, ties, pointsFor | The user's own team is flagged `isMine`. |
-| `Player` | id, sport, externalPlayerId?, fullName, position, proTeam, byeWeek, injuryStatus, statusSource | Directory entity shared across leagues; refreshed daily from Sleeper. |
-| `RosterSlot` | id, teamId, playerId, slotType (`starter` \| `bench` \| `ir`), slotPosition | Join of Team ↔ Player with lineup role. |
-| `Matchup` | id, leagueId, week, homeTeamId, awayTeamId, homeScore, awayScore, state | Scores nullable for CSV leagues. |
-| `Alert` | id, userId, teamId, type, severity, playerId?, message, status, createdAt, resolvedAt | See Section 9 for lifecycle. |
-| `CsvImport` | id, userId, leagueId, fileName, rowCount, errorCount, importedAt | Audit trail for imports; powers idempotent re-import. |
+## 11. API capabilities (summary)
 
-**Identity rule:** two teams are the same team if and only if they share `(connectionId, externalLeagueId, externalRosterId)` — for CSV, `(userId, leagueName, sport, season, teamName)`. Syncs upsert on this identity; they never delete-then-recreate, so alert history survives refreshes.
+The front end talks to a single authenticated API. The full design — endpoint choice, schema, authorization, error model, and pagination — lives in the technical design doc ([docs/TDD.md](/home/kathleen/code/LeagueLens/docs/TDD.md)). This PRD keeps only the product-level capabilities the API must provide:
 
-## 11. API design (GraphQL)
+- Read the signed-in user's dashboard (all teams, matchups, alerts, sync state), team detail, alert feed, and cross-league player search.
+- Connect and disconnect Sleeper by username; preview and confirm CSV imports; request a throttled manual refresh; acknowledge alerts; update alert preferences; delete leagues and accounts.
+- Every capability is scoped to the requesting user, failures surface as specific user-facing messages (unknown username, invalid CSV row, provider unavailable, refresh on cooldown), and no API response ever proxies a live provider call — responses come from LeagueLens' cached, normalized data (Sections 6.3 and 7.2).
 
-A single GraphQL endpoint serves the Next.js front end. Queries are shaped around screens (dashboard, team detail) to avoid over- and under-fetching; DataLoaders batch player and team resolution to prevent N+1 queries against the database.
+## 12. Delivery (summary)
 
-### 11.1 Core schema sketch
-
-```graphql
-type Query {
-  me: User
-  dashboard(filter: DashboardFilter): Dashboard!
-  team(id: ID!): TeamDetail
-  alerts(status: AlertStatus): [Alert!]!
-  playerSearch(query: String!, sport: Sport): [PlayerOwnership!]!
-}
-
-type Mutation {
-  connectSleeper(username: String!): ProviderConnection!
-  disconnectProvider(connectionId: ID!): Boolean!
-  previewCsvImport(file: Upload!): CsvImportPreview!
-  confirmCsvImport(importId: ID!): League!
-  refreshLeague(leagueId: ID!): SyncResult!
-  acknowledgeAlert(alertId: ID!): Alert!
-  updateAlertPreferences(input: AlertPreferencesInput!): User!
-  deleteLeague(leagueId: ID!): Boolean!
-}
-
-type Dashboard {
-  teams: [TeamCard!]!        # sorted: needs-attention first
-  openAlertCount: Int!
-  lastSyncedAt: DateTime
-}
-
-type TeamCard {
-  team: Team!
-  league: League!
-  matchup: Matchup
-  alerts: [Alert!]!
-  syncState: SyncState!
-}
-```
-
-### 11.2 API rules
-
-- **Auth on every field.** The GraphQL layer verifies the Firebase ID token and scopes every resolver to the requesting user; no resolver may return another user's leagues, teams, or alerts.
-- **Errors are typed.** Domain failures (unknown Sleeper username, invalid CSV row, provider down) return structured `errors.extensions.code` values the UI maps to specific messages.
-- **Pagination** (cursor-based) on alerts and player search; dashboard is bounded by the user's own leagues and needs no pagination in the MVP.
-- **No provider passthrough.** Resolvers read normalized database entities only; provider REST calls happen exclusively in sync jobs (Section 12).
-
-## 12. System architecture (Google Cloud)
-
-```text
-Browser
-  │
-  ▼
-Next.js app (React + Tailwind) ── hosted on Cloud Run (or Firebase Hosting + Cloud Run)
-  │  GraphQL over HTTPS, Firebase ID token
-  ▼
-Node.js GraphQL API ── Cloud Run service
-  ├── Cloud SQL (PostgreSQL) — normalized leagues, teams, players, alerts
-  ├── Memorystore (Redis) — hot dashboard/player cache [optional in MVP]
-  ├── Cloud Storage — uploaded CSV files (private bucket, short-lived signed URLs)
-  └── Secret Manager — DB credentials, Firebase admin keys
-
-Background work
-  Cloud Scheduler ──► Pub/Sub topic ──► Cloud Run sync worker (same Node codebase)
-                                          ├── Sleeper adapter → normalize → upsert
-                                          └── Alert engine → evaluate Section 9 rules
-  Firebase Auth — sign-up/sign-in (email + Google), ID tokens verified by the API
-  Cloud Logging / Error Reporting — structured logs, sync failure alerts
-```
-
-Architecture decisions:
-
-- **One Node codebase, two Cloud Run services** (API + sync worker) sharing the data layer and adapters; the worker scales independently during Sunday sync peaks.
-- **PostgreSQL over a document store:** the domain is relational (leagues → teams → roster slots → players), and standings/alerts need joins. Firestore remains an option only for future realtime features.
-- **Sync is pull-based and idempotent:** scheduled jobs upsert on the Section 10 identity rule; a failed run simply retries — no partial-write cleanup needed.
-- **CSV uploads never hit the API box's disk:** files go to Cloud Storage via signed URL; the worker parses and validates from the bucket.
-- **Environments:** `dev` and `prod` Google Cloud projects (or services), with the seeded demo data living only in `prod`'s demo account.
+The MVP is delivered as a local, containerized stack with a seeded demo mode — no cloud account or hosted URL is required to evaluate it. LeagueLens is designed cloud-ready (stateless containerized services, environment-variable configuration, externalized database/cache/upload storage) so it can be hosted later without re-architecture, but **cloud deployment itself is Post-MVP work requiring an explicit budget decision**. System architecture, container topology, and the future Kubernetes/Terraform target are specified in the TDD (Sections 1 and 10) in [docs/TDD.md](/home/kathleen/code/LeagueLens/docs/TDD.md).
 
 ## 13. Technology stack
 
 | Layer | Choice | Why |
 | --- | --- | --- |
 | Front end | React + Next.js (App Router, TypeScript) | SSR/SSG for landing + fast first paint; file-based routing maps cleanly to Section 8. |
-| Styling | Tailwind CSS | Utility-first, mobile-first, dark-mode support out of the box. |
+| Styling / components | MUI (Material UI) + Tailwind CSS | MUI supplies ready-made, accessible React components and theming so the team does not hand-roll tables, forms, and dialogs; Tailwind covers layout utilities. Frontend design: TDD Section 1.1. |
 | Data fetching | Apollo Client (or urql) against the GraphQL API | Cache-first dashboard, typed hooks via codegen. |
 | Back end | Node.js + TypeScript, Apollo Server (GraphQL) | One language across the stack; DataLoader for N+1 protection. |
-| Database | PostgreSQL on Cloud SQL, Prisma (or Drizzle) ORM | Relational fit, migrations, type-safe queries. |
+| Database | PostgreSQL (Docker locally; managed Postgres if cloud-hosted later), Prisma (or Drizzle) ORM | Relational fit, migrations, type-safe queries. |
 | Auth | Firebase Authentication | Google sign-in with near-zero auth code; JWTs verified server-side. |
-| Jobs | Cloud Scheduler + Pub/Sub + Cloud Run worker | Managed cron and fan-out without operating a queue. |
-| Hosting | Cloud Run (front end, API, worker), Cloud Storage, Secret Manager | Scales to zero for a portfolio budget; one `gcloud` workflow. |
-| CI/CD | GitHub Actions → build, test, deploy to Cloud Run | Keeps the public demo continuously deployable. |
+| Jobs | Sync worker with internal scheduler (+ Redis queue if enabled) | Same worker locally and in a future cloud; managed cron/queues (e.g. Cloud Scheduler + Pub/Sub) are a drop-in later. |
+| Hosting (MVP) | Docker + Docker Compose (local) | Zero hosting cost; one-command demo. Cloud-ready: containers, env config, stateless services (TDD Section 10). |
+| CI/CD | GitHub Actions → build, test, build container images | Proves the stack builds clean; cloud deploy step added only when hosting is funded (Post-MVP). |
+| Future cloud | Kubernetes manifests + Terraform (Google Cloud target) | Describes the hosted architecture in code (`terraform validate`/`plan` only in MVP; no `apply`, no spend). |
 | Testing | Vitest/Jest + Testing Library; Playwright for critical flows | Connect flow, CSV import, and alert generation get end-to-end coverage. |
 
 ## 14. Non-functional requirements
@@ -399,12 +332,12 @@ Architecture decisions:
 | --- | --- |
 | Performance | Dashboard GraphQL query p95 < 500 ms server-side for a user with 10 leagues; landing page LCP < 2.5 s on mid-tier mobile. |
 | Freshness | During game windows, displayed scores/rosters no more than 15 minutes behind Sleeper; staleness always visible (FR-2.4). |
-| Reliability | A Sleeper outage or rate-limit never 500s the dashboard; cached reads + exponential-backoff retries in sync jobs. Stay under Sleeper's ~1,000 calls/minute with per-sport player caching. |
-| Security | HTTPS everywhere; Firebase tokens verified on every request; user-scoped authorization in resolvers; secrets only via Secret Manager; CSV uploads scanned for type/size (max 2 MB, `.csv` only) and stored privately. |
+| Reliability | A Sleeper outage or rate-limit never 500s the dashboard; cached reads + exponential-backoff retries in sync jobs. All Sleeper traffic originates from the backend under a shared budget of under 1,000 calls/minute per egress IP (player directory cached once per sport server-side). Limiter and cache design: [docs/TDD.md](/home/kathleen/code/LeagueLens/docs/TDD.md). |
+| Security | HTTPS everywhere; Firebase tokens verified on every request; user-scoped authorization in resolvers; credentials supplied only as environment variables, never committed to the repo (hard constraint, TDD Section 9); CSV uploads scanned for type/size (max 2 MB, `.csv` only) and stored privately. |
 | Privacy | LeagueLens stores the minimum needed: account identity, provider handles, and normalized fantasy data. No provider passwords are ever collected. Account deletion removes user data (FR-7.2). |
 | Accessibility | WCAG 2.1 AA; full keyboard navigation; severity and sport never conveyed by color alone. |
-| Observability | Structured logs with request/sync correlation IDs; Cloud Error Reporting on API 5xx and failed sync runs; a sync-health view (internal) showing last run per provider. |
-| Cost | Portfolio budget: Cloud Run scale-to-zero, smallest Cloud SQL tier, lifecycle rules deleting raw CSV uploads after 30 days. Target: stays within free/low tiers at demo traffic. |
+| Observability | Structured logs with request/sync correlation IDs to stdout; a sync-health view (internal) showing last run per provider. Hosted error reporting plugs in when cloud-hosted. |
+| Cost | MVP hosting cost $0: everything runs locally in Docker. Lifecycle rule deletes raw CSV uploads after 30 days. Any future cloud deployment needs an explicit budget decision first. |
 
 ## 15. Success metrics
 
@@ -412,8 +345,8 @@ This is a portfolio build, so "success" is measured on demo-ability and craft fi
 
 ### 15.1 Portfolio / demo success
 
-- A reviewer can open the public URL, enter the demo, and understand the product in under 2 minutes without a walkthrough.
-- The repo README explains the architecture (Section 12) and how to run each tier locally.
+- A reviewer can clone the repo, start the stack with Docker Compose, enter the seeded demo, and understand the product in under 2 minutes without a walkthrough (screenshots/video in the README tell the story without a hosted URL).
+- The repo README explains how to run each tier locally and links the architecture in the TDD.
 - Core flows (connect, CSV import, alert generation) are covered by automated tests visible in CI.
 
 ### 15.2 Product metrics (instrument from day one)
@@ -433,6 +366,8 @@ This is a portfolio build, so "success" is measured on demo-ability and craft fi
 | Risk | Impact | Mitigation |
 | --- | --- | --- |
 | Sleeper API changes or tightens rate limits | Sync breaks; dashboard goes stale | Adapter isolation (Section 6.2), server-side caching, contract tests against recorded payloads. |
+| Sleeper IP block from exceeding 1,000 calls/minute | All users' sync stops (budget is per egress IP, shared) | Backend-only Sleeper access, shared rate limiter with headroom, request deduping, throttled manual refresh (Section 6.3; design in [docs/TDD.md](/home/kathleen/code/LeagueLens/docs/TDD.md)). |
+| Monetization pressure conflicts with Sleeper's non-commercial terms | Legal/licensing exposure if LeagueLens charges while serving Sleeper data | No paid tier, billing, or ads without a Sleeper commercial license (Sections 3.2, 5.3, 6.3). |
 | Sleeper-league-only MVP underserves ESPN/Yahoo managers | Smaller addressable demo audience | CSV path gives those managers a working route on day one; ESPN/Yahoo adapters are designed-in (Section 6.4). |
 | Injury-status data lags reality | Missed or wrong alerts erode trust | Conservative severity rules (Section 9), "last synced" transparency, manual CSV status overrides. |
 | Username-only Sleeper connect lets anyone view public leagues by guessing a handle | Privacy perception issues | Data is already public via Sleeper's API; LeagueLens accounts still gate who can attach a connection, and disconnect is one click. Document clearly in-app. |
@@ -451,7 +386,7 @@ This is a portfolio build, so "success" is measured on demo-ability and craft fi
 | OQ-1 | Which sports ship in MVP beyond NFL — NBA in v1.0 or v1.1? (Sleeper league discovery fans out per sport, so this is a config + testing call.) | Kathleen | Before sync-worker build |
 | OQ-2 | Does the demo use a real public Sleeper account's leagues or fully seeded fixtures? Seeded is deterministic; real data proves the integration. Proposal: seeded demo + live-connect with your own username. | Kathleen | Before demo seed work |
 | OQ-3 | Email alerts in v1.0, or in-app only (FR-6.4 currently Could)? | Kathleen | Before alerts build |
-| OQ-4 | PostgreSQL via Cloud SQL confirmed, or should the portfolio showcase Firestore instead? This PRD recommends Postgres (Section 12); flag early if Firestore is the story you want to tell. | Kathleen | Before schema build |
+| OQ-4 | PostgreSQL (local Docker) confirmed, or should the portfolio showcase Firestore instead? Postgres is recommended (TDD Sections 1 and 6); flag early if Firestore is the story you want to tell. | Kathleen | Before schema build |
 
 ## 17. Roadmap and definition of done
 
@@ -459,8 +394,8 @@ This is a portfolio build, so "success" is measured on demo-ability and craft fi
 
 | Milestone | Scope | Exit criteria |
 | --- | --- | --- |
-| **M0 — Foundations** | Monorepo/app scaffolding (`frontend/`, `backend/`), Cloud project, CI, design system tokens | Empty Next.js + GraphQL "hello" deployed to Cloud Run from CI. |
-| **M1 — Sleeper vertical slice** | Auth, connect-by-username, sync one sport, dashboard + team detail (read-only) | A real Sleeper user sees their actual teams on the deployed app (FR-1.x, FR-2.x, FR-3.1, FR-4.x). |
+| **M0 — Foundations** | Monorepo/app scaffolding (`frontend/`, `backend/`), Docker Compose stack, CI, MUI theme/design tokens, `.env.example` | Empty Next.js + GraphQL "hello" runs via `docker compose up` and CI builds images. |
+| **M1 — Sleeper vertical slice** | Auth, connect-by-username, sync one sport, dashboard + team detail (read-only) | A real Sleeper user sees their actual teams in the locally running app (FR-1.x, FR-2.x, FR-3.1, FR-4.x). |
 | **M2 — Alerts** | Alert engine (Section 9), dashboard flagging, preferences | Seeded injured-starter scenario produces a correct, resolving alert end to end (FR-6.x). |
 | **M3 — CSV leagues** | Template, upload/preview/validate, idempotent re-import, manual statuses | Offline league round-trips from template to dashboard (FR-5.x, FR-4.3). |
 | **M4 — Portfolio polish** | Seeded demo mode, landing page, README/architecture docs, Playwright pass | Public demo URL is shareable with no caveats (Section 15.1). |
@@ -469,7 +404,7 @@ This is a portfolio build, so "success" is measured on demo-ability and craft fi
 
 - Every **Must** requirement in Section 7 is implemented or explicitly cut with a note in this document's change log.
 - Sleeper connect, CSV import, and alert lifecycle are covered by automated tests; CI is green on `main`.
-- The app is deployed on Google Cloud and the demo mode works without an account.
+- The full stack starts locally with Docker Compose and the demo mode works without an account. (No cloud deployment in MVP.)
 - No screen presents stale or CSV data as live data.
 
 ## Appendix A — CSV import format (v1)
@@ -493,7 +428,7 @@ One row per rostered player. Header row required; column order fixed in the temp
 ## Appendix B — Glossary
 
 - **Provider:** A platform hosting fantasy leagues (Sleeper, ESPN, Yahoo) or the `csv` pseudo-provider for offline leagues.
-- **Adapter:** Server-side module translating one provider's data into the Section 10 model.
+- **Adapter:** Server-side module translating one provider's data into the normalized model in the TDD.
 - **Lineup lock:** The moment a player's game starts and their roster slot can no longer be changed.
 - **Sync:** A scheduled pull of provider data into LeagueLens' normalized store.
 - **Demo mode:** Account-free, read-only exploration using seeded leagues.
@@ -509,6 +444,8 @@ Provider apps (Sleeper, ESPN, Yahoo) each show only their own leagues and alert 
 | Version | Date | Change |
 | --- | --- | --- |
 | 0.1 | 2026-11-20 | Initial draft. Scope decisions: Sleeper-first with CSV as a first-class offline path; dashboard + smart alerts as core value; portfolio/demo build. |
+| 0.2 | 2026-11-20 | Provider and licensing findings: ESPN/Yahoo blockers detailed in Section 6.4 (both out of MVP); Sleeper non-commercial terms and 1,000 calls/minute rate limit recorded in Sections 3.2, 5.3, 6.3, 14, 16. GraphQL schema and rate-limit/cache design moved to [docs/TDD.md](/home/kathleen/code/LeagueLens/docs/TDD.md); Section 11 slimmed to a capability summary. |
+| 0.3 | 2026-11-20 | Frontend adopts MUI component library (React + Next.js). Credentials-as-env-vars hard constraint recorded (design in TDD Section 9). Data model (Section 10) and system architecture (Section 12) slimmed to summaries and moved to the TDD. Cloud deployment descoped from MVP after Google Cloud pricing review: MVP is local Docker Compose, cloud-ready/cloud-native by design with Kubernetes/Terraform as unapplied future artifacts (TDD Section 10). |
 
 
 
