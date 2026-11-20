@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Product | LeagueLens |
-| Document status | Draft v0.3 |
+| Document status | Draft v0.4 |
 | Last updated | 2026-11-20 |
 | Owner | Kathleen |
 | Companion doc | [docs/PRD.md](/home/kathleen/code/LeagueLens/docs/PRD.md) |
@@ -247,7 +247,7 @@ Provider payloads are normalized into these entities; provider-specific IDs are 
 ### 6.2 Storage implementation notes
 
 - Provider IDs (`externalLeagueId`, `externalRosterId`, `externalPlayerId`, Sleeper `user_id`) are stored as strings. Sleeper IDs exceed JavaScript's safe integer range; never parse them as numbers.
-- Migrations own the physical schema (Prisma or Drizzle per PRD Section 13). Index the dashboard path: teams by user/connection, roster slots by team, alerts by user/status, players by sport and external ID.
+- Migrations own the physical schema (Prisma; decided 2026-11-20, TD-4). Index the dashboard path: teams by user/connection, roster slots by team, alerts by user/status, players by sport and external ID.
 - Raw provider payloads may be retained briefly for contract tests and debugging, with a lifecycle rule. They are never served to the client.
 
 ## 7. Open technical decisions
@@ -256,8 +256,8 @@ Provider payloads are normalized into these entities; provider-specific IDs are 
 | --- | --- | --- |
 | TD-1 | Worker topology: single instance with in-process limiter vs. Redis-backed shared limiter from day one (Section 4.4). | Before scaling the worker |
 | TD-2 | Operating limiter target (starting proposal: 700/minute) confirmed against observed Sleeper behavior in dev. | During M1 |
-| TD-3 | GraphQL code-first vs. SDL-first, and codegen setup for the Next.js client. | M0 scaffolding |
-| TD-4 | Prisma vs. Drizzle for PostgreSQL access and migrations. | Before schema build (see PRD OQ-4) |
+| TD-3 | **Decided (2026-11-20): SDL-first.** `backend/src/api/schema.graphql` is authoritative; GraphQL Code Generator writes frontend types into `packages/shared/src/generated/`. | M0 scaffolding |
+| TD-4 | **Decided (2026-11-20): Prisma** for PostgreSQL access and migrations (see PRD OQ-4). | Before schema build (see PRD OQ-4) |
 | TD-5 | Env hookup deliverables: commit `.env.example` (names only), typed startup config validation, and `README.md` setup + env-table update (Section 9.5). | M0 scaffolding |
 | TD-6 | Kubernetes manifests + Terraform in MVP as validated-but-unapplied artifacts, or Post-MVP (Section 10.3/10.4). Default: Compose ships first; K8s/Terraform never block M1. | M0/M4 planning |
 | TD-7 | Revisit Nx/Turborepo only if workspace script build/test times hurt (Section 11.1). Default: stay on plain npm workspaces. | Post-MVP or on measured pain |
@@ -403,3 +403,4 @@ Both modes must keep working; a change that only works in one is incomplete.
 | 0.1 | 2026-11-20 | Initial draft. GraphQL schema and API rules moved here from PRD Section 11; Sleeper rate-limit (under 1,000 calls/minute per IP) and caching design added. PRD keeps product-level summaries only. |
 | 0.2 | 2026-11-20 | Added frontend design (React + MUI, Section 1.1); data model moved here from PRD Section 10 (Section 6.1); system architecture moved here from PRD Section 12 (Section 1); config/secrets hard constraint (Section 9, README follow-up TD-5); deployment rescoped to local Docker Compose MVP with cloud-ready checklist and future Kubernetes/Terraform (Section 10, TD-6). |
 | 0.3 | 2026-11-20 | Repo structure decided (Section 11): npm workspaces (`frontend`, single `backend` with api+worker entrypoints, `packages/shared`) plus Docker Compose for runtime incl. Postgres/Redis. Nx/Lerna explicitly deferred (TD-7). |
+| 0.4 | 2026-11-20 | M0 tooling decided: SDL-first GraphQL with codegen into `packages/shared` (TD-3), Prisma (TD-4), Apollo Client, Vitest, ESLint + Prettier, Tailwind retained (utilities only; MUI CssBaseline is the single reset, Section 1.1). Node pinned via `.nvmrc`. |

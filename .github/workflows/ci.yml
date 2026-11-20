@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run codegen
+      # Schema-first drift check: generated types must match the committed SDL.
+      - run: git diff --exit-code packages/shared/src/generated
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test
+      - run: npm run build
+
+  compose-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp .env.example .env
+      - run: docker compose build
+      - run: docker compose up -d --wait
+      - run: curl --fail http://localhost:4000/healthz
+      - run: curl --fail http://localhost:3000/
+      - if: always()
+        run: docker compose down -v

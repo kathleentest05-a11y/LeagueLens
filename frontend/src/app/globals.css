@@ -1,0 +1,4 @@
+/* Tailwind v4 utilities only. Preflight is intentionally omitted:
+   MUI CssBaseline is the single reset (TDD 1.1). */
+@import 'tailwindcss/theme.css';
+@import 'tailwindcss/utilities.css';

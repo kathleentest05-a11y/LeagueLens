@@ -77,6 +77,7 @@ web_modules/
 # Next.js build output
 .next
 out
+next-env.d.ts
 
 # Nuxt.js build / generate output
 .nuxt
@@ -155,3 +156,13 @@ vite.config.ts.timestamp-*
 .nx/cache
 .nx/workspace-data
 .nx/migrate-runs
+
+# Local runtime data (CSV uploads in dev; Docker uses a named volume)
+backend/data/
+
+# AI-tool sandbox mountpoints injected into the workspace (not project content)
+.muse/
+.agents/
+.eden/
+.hg/
+.sl/

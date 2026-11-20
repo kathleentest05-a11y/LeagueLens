@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Product | LeagueLens |
-| Document status | Draft v0.3 |
+| Document status | Draft v0.4 |
 | Companion doc | [docs/TDD.md](/home/kathleen/code/LeagueLens/docs/TDD.md) (technical design: frontend, GraphQL schema, data model, system architecture, Sleeper rate limiting/caching, secrets, deployment) |
 | Last updated | 2026-11-20 |
 | Owner | Kathleen |
@@ -316,15 +316,15 @@ The MVP is delivered as a local, containerized stack with a seeded demo mode —
 | --- | --- | --- |
 | Front end | React + Next.js (App Router, TypeScript) | SSR/SSG for landing + fast first paint; file-based routing maps cleanly to Section 8. |
 | Styling / components | MUI (Material UI) + Tailwind CSS | MUI supplies ready-made, accessible React components and theming so the team does not hand-roll tables, forms, and dialogs; Tailwind covers layout utilities. Frontend design: TDD Section 1.1. |
-| Data fetching | Apollo Client (or urql) against the GraphQL API | Cache-first dashboard, typed hooks via codegen. |
+| Data fetching | Apollo Client against the GraphQL API | Cache-first dashboard, typed hooks via codegen. |
 | Back end | Node.js + TypeScript, Apollo Server (GraphQL) | One language across the stack; DataLoader for N+1 protection. |
-| Database | PostgreSQL (Docker locally; managed Postgres if cloud-hosted later), Prisma (or Drizzle) ORM | Relational fit, migrations, type-safe queries. |
+| Database | PostgreSQL (Docker locally; managed Postgres if cloud-hosted later), Prisma ORM | Relational fit, migrations, type-safe queries. |
 | Auth | Firebase Authentication | Google sign-in with near-zero auth code; JWTs verified server-side. |
 | Jobs | Sync worker with internal scheduler (+ Redis queue if enabled) | Same worker locally and in a future cloud; managed cron/queues (e.g. Cloud Scheduler + Pub/Sub) are a drop-in later. |
 | Hosting (MVP) | Docker + Docker Compose (local) | Zero hosting cost; one-command demo. Cloud-ready: containers, env config, stateless services (TDD Section 10). |
 | CI/CD | GitHub Actions → build, test, build container images | Proves the stack builds clean; cloud deploy step added only when hosting is funded (Post-MVP). |
 | Future cloud | Kubernetes manifests + Terraform (Google Cloud target) | Describes the hosted architecture in code (`terraform validate`/`plan` only in MVP; no `apply`, no spend). |
-| Testing | Vitest/Jest + Testing Library; Playwright for critical flows | Connect flow, CSV import, and alert generation get end-to-end coverage. |
+| Testing | Vitest + Testing Library; Playwright for critical flows | Connect flow, CSV import, and alert generation get end-to-end coverage. |
 
 ## 14. Non-functional requirements
 
@@ -386,7 +386,7 @@ This is a portfolio build, so "success" is measured on demo-ability and craft fi
 | OQ-1 | Which sports ship in MVP beyond NFL — NBA in v1.0 or v1.1? (Sleeper league discovery fans out per sport, so this is a config + testing call.) | Kathleen | Before sync-worker build |
 | OQ-2 | Does the demo use a real public Sleeper account's leagues or fully seeded fixtures? Seeded is deterministic; real data proves the integration. Proposal: seeded demo + live-connect with your own username. | Kathleen | Before demo seed work |
 | OQ-3 | Email alerts in v1.0, or in-app only (FR-6.4 currently Could)? | Kathleen | Before alerts build |
-| OQ-4 | PostgreSQL (local Docker) confirmed, or should the portfolio showcase Firestore instead? Postgres is recommended (TDD Sections 1 and 6); flag early if Firestore is the story you want to tell. | Kathleen | Before schema build |
+| OQ-4 | **Closed (2026-11-20): PostgreSQL + Prisma confirmed.** (Was: Postgres vs. Firestore; TDD Sections 1 and 6 recommended Postgres.) | Kathleen | Before schema build |
 
 ## 17. Roadmap and definition of done
 
@@ -446,6 +446,7 @@ Provider apps (Sleeper, ESPN, Yahoo) each show only their own leagues and alert 
 | 0.1 | 2026-11-20 | Initial draft. Scope decisions: Sleeper-first with CSV as a first-class offline path; dashboard + smart alerts as core value; portfolio/demo build. |
 | 0.2 | 2026-11-20 | Provider and licensing findings: ESPN/Yahoo blockers detailed in Section 6.4 (both out of MVP); Sleeper non-commercial terms and 1,000 calls/minute rate limit recorded in Sections 3.2, 5.3, 6.3, 14, 16. GraphQL schema and rate-limit/cache design moved to [docs/TDD.md](/home/kathleen/code/LeagueLens/docs/TDD.md); Section 11 slimmed to a capability summary. |
 | 0.3 | 2026-11-20 | Frontend adopts MUI component library (React + Next.js). Credentials-as-env-vars hard constraint recorded (design in TDD Section 9). Data model (Section 10) and system architecture (Section 12) slimmed to summaries and moved to the TDD. Cloud deployment descoped from MVP after Google Cloud pricing review: MVP is local Docker Compose, cloud-ready/cloud-native by design with Kubernetes/Terraform as unapplied future artifacts (TDD Section 10). |
+| 0.4 | 2026-11-20 | OQ-4 closed: PostgreSQL + Prisma confirmed. Either/or stack choices resolved: Apollo Client, Vitest (Section 13). |
 
 
 

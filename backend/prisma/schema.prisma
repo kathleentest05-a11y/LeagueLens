@@ -1,0 +1,14 @@
+// Prisma schema (TD-4 decided 2026-11-20).
+// M0 scaffold: datasource/generator only. The domain models from TDD
+// Section 6.1 (User, ProviderConnection, League, Team, Player,
+// RosterSlot, Matchup, Alert, CsvImport) land with the M1 schema build.
+// Provider IDs are strings; Sleeper IDs exceed JS safe integers (TDD 6.2).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}

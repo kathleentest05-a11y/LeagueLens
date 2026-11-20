@@ -1,0 +1,13 @@
+# Authoritative GraphQL schema (SDL-first, TDD TD-3).
+# M0 scaffold only; the domain schema from TDD Section 2.1 lands with M1.
+
+type Health {
+  status: String!
+  service: String!
+  version: String!
+}
+
+type Query {
+  hello: String!
+  health: Health!
+}
