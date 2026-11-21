@@ -45,8 +45,10 @@ npm run dev                   # web :3000, api :4000, worker
 ## Configuration
 
 All config and secrets are environment variables (hard constraint, TDD
-Section 9). Copy each `.env.example` to `.env.local` next to it and fill in
-values; never commit real values.
+Section 9). Copy the root `.env.example` to `.env` (Compose reads it), and
+`frontend/`/`backend/` examples to `.env.local` next to them (Next.js and
+the backend's `dotenv` loader read those). Variables set in the real
+environment always win over file values; never commit real values.
 
 | File | Holds |
 | --- | --- |

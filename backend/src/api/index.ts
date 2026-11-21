@@ -5,9 +5,11 @@ import { expressMiddleware } from '@apollo/server/express4';
 import cors from 'cors';
 import express from 'express';
 import { loadConfig } from '../shared/config';
+import { loadEnvFiles } from '../shared/env';
 import { resolvers } from './resolvers';
 
 async function main(): Promise<void> {
+  loadEnvFiles();
   const config = loadConfig();
   const typeDefs = readFileSync(join(__dirname, 'schema.graphql'), 'utf-8');
 

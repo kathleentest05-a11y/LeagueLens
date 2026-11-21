@@ -1,9 +1,11 @@
 import { loadConfig } from '../shared/config';
+import { loadEnvFiles } from '../shared/env';
 
 // M0 scaffold: the sync worker process exists and stays alive, but the
 // scheduler, Sleeper adapter, and alert engine land in M1/M2 (TDD Sections
 // 3-5). The worker remains the only component allowed to call providers.
 function main(): void {
+  loadEnvFiles();
   const config = loadConfig();
   console.log(
     `LeagueLens worker started (scaffold; sync loop lands in M1, limiter target ${config.sleeperRateLimitPerMin}/min).`,
