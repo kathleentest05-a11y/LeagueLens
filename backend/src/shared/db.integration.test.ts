@@ -1,7 +1,6 @@
 import { execFile } from 'node:child_process';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import type { PrismaClient } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb } from './db';
 
@@ -15,7 +14,7 @@ import { createDb } from './db';
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 
 describe.skipIf(!testDatabaseUrl)('Prisma identity rules (integration)', () => {
-  let db: PrismaClient;
+  let db: ReturnType<typeof createDb>;
   const runId = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
   const email = `schema-test-${runId}@example.test`;
   const createdPlayerIds: string[] = [];
@@ -32,11 +31,12 @@ describe.skipIf(!testDatabaseUrl)('Prisma identity rules (integration)', () => {
       );
     }
     const backendDir = join(__dirname, '..', '..');
-    await promisify(execFile)(
-      'npx',
-      ['prisma', 'migrate', 'deploy', '--schema', 'prisma/schema.prisma'],
-      { cwd: backendDir, env: { ...process.env, DATABASE_URL: testDatabaseUrl } },
-    );
+    // Prisma 7 resolves schema/migrations/datasource from prisma.config.ts;
+    // the explicit DATABASE_URL here wins over any local env file.
+    await promisify(execFile)('npx', ['prisma', 'migrate', 'deploy'], {
+      cwd: backendDir,
+      env: { ...process.env, DATABASE_URL: testDatabaseUrl },
+    });
 
     db = createDb(testDatabaseUrl);
     const user = await db.user.create({ data: { email, displayName: 'Schema Test' } });

@@ -5,3 +5,4 @@ package-lock.json
 docs/PRD.md
 docs/TDD.md
 packages/shared/src/generated
+backend/src/generated

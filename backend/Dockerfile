@@ -22,6 +22,8 @@ COPY --from=build /app/packages/shared/dist ./packages/shared/dist
 COPY --from=build /app/backend/package.json ./backend/package.json
 COPY --from=build /app/backend/dist ./backend/dist
 COPY --from=build /app/backend/prisma ./backend/prisma
+# Prisma 7 CLI config (Migrate datasource URL lives here, not in the schema).
+COPY --from=build /app/backend/prisma.config.ts ./backend/prisma.config.ts
 USER node
 EXPOSE 4000
 CMD ["npm", "run", "start:api", "-w", "@leaguelens/backend"]

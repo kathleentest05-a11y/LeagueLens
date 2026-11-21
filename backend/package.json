@@ -20,12 +20,13 @@
   "dependencies": {
     "@apollo/server": "^4.11.0",
     "@leaguelens/shared": "*",
-    "@prisma/client": "^6.0.0",
+    "@prisma/adapter-pg": "^7.10.1",
+    "@prisma/client": "^7.10.1",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^4.21.0",
     "graphql": "^16.9.0",
-    "prisma": "^6.0.0"
+    "prisma": "^7.10.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
