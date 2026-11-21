@@ -52,12 +52,15 @@ values; never commit real values.
 | --- | --- |
 | `.env.example` (root) | Compose-level Postgres settings + public GraphQL URL |
 | `frontend/.env.example` | `NEXT_PUBLIC_*` browser config (non-secret; Firebase web config in M1) |
-| `backend/.env.example` | Server-only config: `DATABASE_URL`, ports, upload dir, Sleeper rate-limit target, Firebase Admin (M1) |
+| `backend/.env.example` | Server-only config: `DATABASE_URL`, ports, upload dir, Sleeper rate-limit target, Firebase Admin (M1), Yahoo OAuth (post-M1 M5, optional) |
 
 Where values come from: local Postgres defaults are invented per-machine in
 your root `.env`; Sleeper needs no API key; Firebase values come from a
 Firebase project's console (or stay blank — M1 local dev uses the Auth
-emulator). In a future deployment these are injected from the platform
+emulator); Yahoo values come from your own registered app at
+<https://developer.yahoo.com/apps/> (or stay blank — Yahoo is post-M1 and
+disabled when unconfigured; for Compose mode set the same `YAHOO_*` names
+in your root `.env` and Compose passes them to `api`/`worker`). In a future deployment these are injected from the platform
 secret store (e.g. Google Secret Manager) as environment variables; the
 code reads `process.env` the same way everywhere (TDD Sections 9–10).
 

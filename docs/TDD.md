@@ -3,8 +3,8 @@
 | Field | Value |
 | --- | --- |
 | Product | LeagueLens |
-| Document status | Draft v0.4 |
-| Last updated | 2026-11-20 |
+| Document status | Draft v0.5 |
+| Last updated | 2026-11-21 |
 | Owner | Kathleen |
 | Companion doc | [docs/PRD.md](/home/kathleen/code/LeagueLens/docs/PRD.md) |
 | Stack | React, Next.js, MUI (Material UI), Tailwind CSS, Node.js, GraphQL, PostgreSQL, Docker (cloud-ready; no cloud deployment in MVP) |
@@ -47,8 +47,8 @@ Background work
 Service boundaries the implementation must respect:
 
 - **Web (React + Next.js).** Renders UI and calls the GraphQL API with a Firebase ID token. It never calls Sleeper (or any provider) directly. See Section 1.1.
-- **API (Node.js + GraphQL).** Serves reads from the normalized database only. It enqueues sync work; it does not perform provider REST calls inline, except for the bounded username lookup during connect (Section 3).
-- **Sync worker (Node.js, same codebase).** The only component allowed to call provider APIs. It owns the Sleeper rate limiter, caches, retries, normalization, upserts, and the alert engine run that follows each sync.
+- **API (Node.js + GraphQL).** Serves reads from the normalized database only. It enqueues sync work; it does not perform provider REST calls inline, except for the bounded username lookup during connect (Section 3). One further exception is anticipated post-M1 — the Yahoo OAuth redirect/callback (code-for-token exchange) — and may only be built as designed in TD-8; it is not a general license for API-side provider calls.
+- **Sync worker (Node.js, same codebase).** The only component allowed to call provider APIs for data. It owns the Sleeper rate limiter, caches, retries, normalization, upserts, and the alert engine run that follows each sync. The post-M1 Yahoo adapter follows the same shape: worker-only data calls through its own adapter/limiter, with per-user token refresh inside the worker (TD-8).
 - **Stores.** PostgreSQL is the source of truth for normalized entities. Redis backs the shared rate limiter, request deduping, and hot caches when more than one worker instance runs (Section 4.4). Env-configured upload storage holds raw CSV files (mounted volume locally, object storage when cloud-hosted).
 
 Data flow for a sync: scheduler/queue → sync worker → provider adapter → normalize → upsert (Section 6.1 identity rule) → alert evaluation → update `lastSyncAt`. The API and UI only ever read the result.
@@ -126,7 +126,7 @@ This is a sketch, not the shipped schema. The schema in the backend codebase is 
 - **Auth on every field.** The GraphQL layer verifies the Firebase ID token and scopes every resolver to the requesting user; no resolver may return another user's leagues, teams, or alerts. Unauthenticated access is limited to the seeded demo's read-only queries.
 - **Errors are typed.** Domain failures (unknown Sleeper username, invalid CSV row, provider down, refresh on cooldown) return structured `errors.extensions.code` values the UI maps to specific messages. Initial codes: `SLEEPER_USER_NOT_FOUND`, `SLEEPER_NO_LEAGUES`, `CSV_VALIDATION_FAILED`, `PROVIDER_UNAVAILABLE`, `REFRESH_COOLDOWN`, `UNAUTHENTICATED`, `NOT_FOUND`.
 - **Pagination** (cursor-based) on alerts and player search; dashboard is bounded by the user's own leagues and needs no pagination in the MVP.
-- **No provider passthrough.** Resolvers read normalized database entities only; provider REST calls happen exclusively in sync jobs (Section 5), with one bounded exception: `connectSleeper` may resolve username to `user_id` synchronously, then enqueue the league fan-out (Section 3).
+- **No provider passthrough.** Resolvers read normalized database entities only; provider REST calls happen exclusively in sync jobs (Section 5), with one bounded exception: `connectSleeper` may resolve username to `user_id` synchronously, then enqueue the league fan-out (Section 3). Post-M1, the Yahoo OAuth callback (TD-8) is the only other sanctioned API-side provider exchange, and stored Yahoo tokens must never be exposed through any GraphQL field.
 - **Rate limiting at the API edge.** Mutations that trigger provider work (`connectSleeper`, `refreshLeague`) are limited per user and per league (Section 4.3) so clients cannot amplify a UI action into Sleeper budget exhaustion. Exceeded limits return `REFRESH_COOLDOWN` with a retry-after hint the UI renders as "refresh available again in N minutes."
 - **Uploads.** `previewCsvImport` never writes to the API instance's local disk: the file lands in env-configured upload storage (Section 1) and the worker parses it from there. When cloud-hosted this becomes a short-lived signed URL to object storage; locally it is a direct upload to the API-adjacent volume via the API service.
 
@@ -233,7 +233,7 @@ Provider payloads are normalized into these entities; provider-specific IDs are 
 | Entity | Key fields | Notes |
 | --- | --- | --- |
 | `User` | id, email, displayName, authProvider | LeagueLens account (Firebase Auth identity). |
-| `ProviderConnection` | id, userId, provider (`sleeper` \| `csv`), externalUserId, handle, status, lastSyncAt | One row per connected provider or CSV source. |
+| `ProviderConnection` | id, userId, provider (`sleeper` \| `csv`), externalUserId, handle, status, lastSyncAt | One row per connected provider or CSV source. M1 ships `sleeper` \| `csv` only; the M5 Yahoo migration adds `yahoo` plus its token storage as decided in TD-8 — do not widen the M1 schema preemptively. |
 | `League` | id, connectionId, externalLeagueId?, name, sport, season, scoringSettings (JSON), source | `source` mirrors the provider for filtering and labeling. |
 | `Team` | id, leagueId, externalRosterId?, ownerName, teamName, wins, losses, ties, pointsFor | The user's own team is flagged `isMine`. |
 | `Player` | id, sport, externalPlayerId?, fullName, position, proTeam, byeWeek, injuryStatus, statusSource | Directory entity shared across leagues; refreshed daily from Sleeper. |
@@ -261,10 +261,11 @@ Provider payloads are normalized into these entities; provider-specific IDs are 
 | TD-5 | Env hookup deliverables: commit `.env.example` (names only), typed startup config validation, and `README.md` setup + env-table update (Section 9.5). | M0 scaffolding |
 | TD-6 | Kubernetes manifests + Terraform in MVP as validated-but-unapplied artifacts, or Post-MVP (Section 10.3/10.4). Default: Compose ships first; K8s/Terraform never block M1. | M0/M4 planning |
 | TD-7 | Revisit Nx/Turborepo only if workspace script build/test times hurt (Section 11.1). Default: stay on plain npm workspaces. | Post-MVP or on measured pain |
+| TD-8 | Yahoo OAuth + token lifecycle design (M5, post-M1; PRD Section 6.4). Gated on the M5 spike verifying: Fantasy Sports read permission actually granted on the registered app; a local-dev redirect round-trip given Yahoo requires `https` redirect URIs and rejects plain-`http` localhost (`https://localhost` registration on the LeagueLens app is already confirmed accepted, 2026-11-21 — the browser delivers the redirect, so a locally trusted-TLS listener (e.g. mkcert) on the registered port/path should suffice; a tunnel-fronted public `https` URL fronting only the callback listener is the fallback only if the TLS round-trip fails); signed-in-user league discovery across games/seasons, roster/matchup/player-status field mapping onto PRD Section 9, and Yahoo rate limits. Design must then decide: callback route shape (API HTTP route vs. GraphQL) with OAuth `state`/CSRF handling and read-only scope; refresh-token storage with encryption at rest (incl. any key env var) and rotation; worker refresh-before-sync and the user-visible re-auth-needed state on revoked/failed refresh; revoke + purge on disconnect (FR-1.4) and account delete (FR-7.2); Yahoo adapter limiter budget; and how local dev (Compose and host) serves the `https` callback the spike proved, without adding TLS burden to the default demo path. Yahoo *config* plumbing already landed 2026-11-21 (optional, all-or-nothing `YAHOO_*` in `backend/src/shared/config.ts`, redirect URI validated as `https`); no Yahoo network code until this decision closes. | Before any Yahoo build (M5) |
 
 ## 8. Testing notes
 
-- Contract tests replay recorded Sleeper payloads (including `null`-body responses) through the adapter without network access.
+- Contract tests replay recorded Sleeper payloads (including `null`-body responses) through the adapter without network access. The M5 Yahoo adapter gets the same treatment, plus token-refresh/revoked-consent tests with a fake Yahoo token endpoint — tests never need a real client secret.
 - Limiter tests prove the client wrapper cannot exceed its budget under concurrent load and that deduping collapses identical in-flight calls.
 - Sync idempotency tests run the same league bundle twice and assert one set of entities and no duplicate open alerts.
 
@@ -298,8 +299,9 @@ Final names are fixed at M0 scaffolding; `.env.example` becomes authoritative th
 | `REDIS_URL` | Server | Redis, if enabled (Section 4.4) |
 | `UPLOAD_DIR` (local) / `UPLOAD_BUCKET` (future cloud) | Server | CSV upload storage location |
 | `SLEEPER_RATE_LIMIT_PER_MIN` | Server | Limiter operating target (Section 4.1) |
+| `YAHOO_CLIENT_ID`, `YAHOO_CLIENT_SECRET`, `YAHOO_REDIRECT_URI` | Server | Registered Yahoo OAuth app (M5, post-M1). Optional and all-or-nothing: all blank = Yahoo disabled on this install; a partial set fails startup. Redirect URI must be an `https` URL exactly matching the registered app (Yahoo rejects `http` redirects; local pattern per TD-8 spike). Never `NEXT_PUBLIC_`. |
 
-Note Sleeper itself needs no credential — there is no `SLEEPER_API_KEY`, and inventing one in config would be wrong.
+Note Sleeper itself needs no credential — there is no `SLEEPER_API_KEY`, and inventing one in config would be wrong. Yahoo is the opposite shape: per-install app credentials (above) plus, at runtime, per-user OAuth refresh tokens. Those tokens are secrets stored in the database by necessity; they are encrypted at rest per TD-8, never logged, and never returned by the API.
 
 ### 9.4 Safety rules
 
@@ -404,3 +406,4 @@ Both modes must keep working; a change that only works in one is incomplete.
 | 0.2 | 2026-11-20 | Added frontend design (React + MUI, Section 1.1); data model moved here from PRD Section 10 (Section 6.1); system architecture moved here from PRD Section 12 (Section 1); config/secrets hard constraint (Section 9, README follow-up TD-5); deployment rescoped to local Docker Compose MVP with cloud-ready checklist and future Kubernetes/Terraform (Section 10, TD-6). |
 | 0.3 | 2026-11-20 | Repo structure decided (Section 11): npm workspaces (`frontend`, single `backend` with api+worker entrypoints, `packages/shared`) plus Docker Compose for runtime incl. Postgres/Redis. Nx/Lerna explicitly deferred (TD-7). |
 | 0.4 | 2026-11-20 | M0 tooling decided: SDL-first GraphQL with codegen into `packages/shared` (TD-3), Prisma (TD-4), Apollo Client, Vitest, ESLint + Prettier, Tailwind retained (utilities only; MUI CssBaseline is the single reset, Section 1.1). Node pinned via `.nvmrc`. |
+| 0.5 | 2026-11-21 | Yahoo planned post-M1 ahead of ESPN (PRD v0.5): optional all-or-nothing `YAHOO_*` config landed in `backend/src/shared/config.ts` + `backend/.env.example` with Compose pass-through to api/worker (Section 9.3); anticipated Yahoo OAuth callback carved out of the no-provider-passthrough rules (Sections 1, 2.2) strictly as designed in new TD-8; `ProviderConnection` stays `sleeper` \| `csv` for M1 (Section 6.1). No Yahoo network code yet. |

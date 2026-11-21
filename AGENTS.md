@@ -44,9 +44,15 @@ is npm — do not introduce yarn/pnpm lockfiles.
 - **The browser never calls a provider.** Only the backend worker may call
   Sleeper (plus the API's single connect-time username lookup). API
   resolvers read the normalized database only — no provider passthrough.
+  Yahoo (post-M1, M5) follows the same shape: worker-only data calls, with
+  the API's only Yahoo exchange being the OAuth callback designed in TDD
+  TD-8. Yahoo tokens are never returned by the API or logged; `YAHOO_*`
+  config is backend-only and optional (blank = Yahoo disabled). ESPN has
+  no milestone — do not build it ahead of Yahoo (PRD Section 6.4).
 - **All Sleeper traffic goes through the one adapter + rate limiter**
   (backend, M1). No other code constructs a Sleeper URL. Budget: stay under
   1,000 calls/min per egress IP; operating target in `SLEEPER_RATE_LIMIT_PER_MIN`.
+  The same one-adapter rule applies to Yahoo traffic when M5 lands.
 - **Provider IDs are strings.** Sleeper IDs exceed JS safe integers; never
   parse them as numbers.
 - **Sync upserts, never delete-then-recreate**, keyed on the identity rules

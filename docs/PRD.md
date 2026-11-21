@@ -3,9 +3,9 @@
 | Field | Value |
 | --- | --- |
 | Product | LeagueLens |
-| Document status | Draft v0.4 |
+| Document status | Draft v0.5 |
 | Companion doc | [docs/TDD.md](/home/kathleen/code/LeagueLens/docs/TDD.md) (technical design: frontend, GraphQL schema, data model, system architecture, Sleeper rate limiting/caching, secrets, deployment) |
-| Last updated | 2026-11-20 |
+| Last updated | 2026-11-21 |
 | Owner | Kathleen |
 | Build type | Portfolio / demo build (full-stack showcase) |
 | Stack | React, Next.js, MUI (Material UI), Tailwind CSS, Node.js, GraphQL, Docker (cloud-ready; no cloud deployment in MVP) |
@@ -107,7 +107,7 @@ The pain peaks when seasons overlap (for example, NFL Sundays during the NBA reg
 ### 5.2 Post-MVP (v1.x)
 
 - Hosted cloud deployment with a public demo URL (requires budget approval; MVP is local-only but cloud-ready — Section 12).
-- Additional providers: ESPN and Yahoo (deferred — see Section 6.4).
+- Yahoo provider via per-user OAuth (planned post-M1 milestone M5, spike first — see Section 6.4). ESPN remains deferred with no milestone (Section 6.4).
 - Player news feed and trending adds/drops across the manager's leagues.
 - Weekly digest email and push notifications.
 - Start/sit comparison using projections; waiver-wire suggestions.
@@ -128,7 +128,7 @@ These assumptions are decided for the MVP and revisited only if a provider prove
 
 1. **Provider API access is optional.** CSV import is a first-class path, not a fallback buried in settings. Every dashboard feature that can work from CSV data must work for CSV leagues.
 2. **One connection surfaces all leagues.** When a user connects a provider, LeagueLens treats that single connection as granting visibility into *all* of the user's leagues on that provider, across every supported sport. The user connects once; LeagueLens fans out internally (for Sleeper: one league query per sport and season) and presents one unified list.
-3. **Sleeper first.** ESPN and Yahoo have no comparably open API — their access involves fragile auth, private-league entitlements, and token upkeep. Sleeper's public read API needs no OAuth, so it ships in the MVP; ESPN and Yahoo are designed for, but not built.
+3. **Sleeper first, Yahoo second, ESPN last.** Sleeper's public read API needs no OAuth, so it ships in the MVP. Yahoo has an official OAuth API and (as of 2026-11-21) a registered LeagueLens developer app, so it is the next provider after the Sleeper slice is proven — still post-MVP, because per-user consent and token upkeep are real work (Section 6.4). ESPN has no official API or OAuth at all, so it remains designed for, but not built or scheduled.
 
 ### 6.2 Provider adapter design
 
@@ -139,7 +139,7 @@ Every provider — including CSV — implements the same internal adapter contra
 - `getLeagueBundle(leagueId)` → league settings, members, rosters, matchups, standings.
 - `getPlayers(sport)` → normalized player directory (cached; refreshed on a schedule).
 
-All providers normalize into the shared data model in the TDD (summarized in Section 10). Adding ESPN or Yahoo later means writing one new adapter — no schema or UI rewrite.
+All providers normalize into the shared data model in the TDD (summarized in Section 10). Adding Yahoo or ESPN later means writing one new adapter — no schema or UI rewrite — plus, for Yahoo, the OAuth connect and token lifecycle in Section 6.4.
 
 ### 6.3 Sleeper (MVP provider)
 
@@ -151,13 +151,19 @@ All providers normalize into the shared data model in the TDD (summarized in Sec
 - **Sync policy (product commitment):** Player directory daily; leagues/rosters/matchups every 15 minutes during active game windows, hourly otherwise. Data is cached server-side and the UI always reads LeagueLens' store, never Sleeper directly. Manual refresh is throttled per league so users cannot exhaust the shared rate budget.
 - **Limits to design around:** League lists are per sport and season (handled by the fan-out in 6.1); unknown IDs can return a literal `null` body; data is read-only by design.
 
-### 6.4 ESPN and Yahoo (deferred — out of MVP scope)
+### 6.4 Yahoo (planned post-M1) and ESPN (deferred) — both out of MVP scope
 
-Both providers are designed for (Section 6.2) but not built in the MVP. No MVP UI may promise them beyond a disabled "Coming soon" affordance. Findings recorded 2026-11-20:
+Both providers are designed for (Section 6.2) but not built in the MVP. No MVP UI may promise either beyond a disabled "Coming soon" affordance. Provider order is Sleeper, then Yahoo, then ESPN (Section 6.1). Findings recorded 2026-11-20; Yahoo updated 2026-11-21:
 
-**Yahoo Fantasy.** The Yahoo Fantasy Sports API requires a registered developer application (consumer key/secret via the [Yahoo developer portal](https://developer.yahoo.com/)) and per-user OAuth 2.0 consent. An existing personal key does not remove the per-user consent flow. Yahoo access tokens are short-lived (about one hour) and require refresh-token storage and upkeep per LeagueLens user. That combination — app review/registration, OAuth redirect handling, and token lifecycle — is out of scope for the MVP. A future Yahoo adapter may revisit it once the Sleeper path is proven.
+**Yahoo Fantasy — planned as the M5 (post-M1) milestone, spike first.** The Yahoo Fantasy Sports API requires a registered developer application (consumer key/secret via the [Yahoo developer portal](https://developer.yahoo.com/apps/)) and per-user OAuth 2.0 consent. As of 2026-11-21 a LeagueLens Yahoo app is registered, which clears only the registration step. What it does *not* clear — and why Yahoo stays out of the MVP and behind the Sleeper slice:
 
-**ESPN Fantasy.** ESPN has no official public Fantasy API or OAuth flow. The available route is an undocumented internal API documented by the community (see the [Public ESPN Fantasy API docs](https://github.com/pseudo-r/Public-ESPN-Fantasy-API), including its [authentication notes](https://github.com/pseudo-r/Public-ESPN-Fantasy-API/blob/main/docs/authentication.md)). Two blockers keep it out of the MVP:
+- **Per-user OAuth consent (decided 2026-11-21: for any LeagueLens user, not owner-only).** Each user authorizes their own Yahoo account through an OAuth redirect flow; LeagueLens never sees a Yahoo password. That flow, its error/denied states, and a "reconnect Yahoo" state when consent is revoked are new product surface.
+- **Token lifecycle.** Yahoo access tokens are short-lived (about one hour), so the sync worker must store a refresh token per user and refresh before syncing. Disconnect (FR-1.4) and account deletion (FR-7.2) must revoke/purge those tokens. Token storage design (encryption at rest, rotation) is TDD open decision TD-8.
+- **Unconfigured installs stay clean.** The client secret belongs to the registered app, so a reviewer who clones the repo has no working Yahoo credentials. Yahoo config is therefore optional (`YAHOO_CLIENT_ID`/`YAHOO_CLIENT_SECRET`/`YAHOO_REDIRECT_URI`, backend-only): blank means the Yahoo affordance renders disabled and nothing else changes. Yahoo can never be a demo or MVP exit criterion.
+
+Before any Yahoo build is scheduled, a time-boxed spike must verify: the registered app actually has Fantasy Sports read permission granted (not just created); an OAuth redirect round-trips in local development despite Yahoo requiring `https` redirect URIs (plain-`http` localhost is rejected, but the Yahoo portal accepted an `https://localhost` redirect URI on the registered app — confirmed 2026-11-21 — so the spike only needs to prove the round-trip against a locally trusted-TLS listener, since the browser delivers the redirect; a tunnel-fronted public `https` URL is the fallback only if that fails); league discovery for the signed-in user across games/seasons, and which roster/matchup/player-status fields map onto the Section 9 alert rules; and Yahoo's rate limits. The spike's output is the TD-8 decision in the TDD, not production code. Yahoo Must-level requirements are deliberately not added to Section 7 until the spike passes, so the MVP definition of done (Section 17.2) is unchanged.
+
+**ESPN Fantasy — deferred indefinitely, no milestone; Yahoo goes first.** ESPN has no official public Fantasy API or OAuth flow. The available route is an undocumented internal API documented by the community (see the [Public ESPN Fantasy API docs](https://github.com/pseudo-r/Public-ESPN-Fantasy-API), including its [authentication notes](https://github.com/pseudo-r/Public-ESPN-Fantasy-API/blob/main/docs/authentication.md)). Two blockers keep it out of the MVP:
 
 1. **No user-based discovery.** The API is league-scoped, not user-scoped. There is no equivalent of Sleeper's username → `user_id` → all leagues lookup, so LeagueLens cannot auto-discover "every ESPN league this user is in." Enumerating public league IDs is not a sustainable or permissible substitute. Even for public leagues (which need no auth), the user would have to supply each `leagueId`, season, and sport by hand. That breaks the Section 6.1 promise that one connection surfaces all leagues.
 2. **Private leagues need browser session cookies.** Private leagues require the user's `espn_s2` session token and `SWID` cookie, copied out of the browser's dev tools. There is no OAuth alternative. Asking users to extract cookies is poor onboarding, those cookies are account-equivalent secrets LeagueLens would have to store and refresh, and they rotate on password change or session expiry. Coupled with an undocumented API that can change without notice, that is too fragile a foundation for the MVP.
@@ -334,7 +340,7 @@ The MVP is delivered as a local, containerized stack with a seeded demo mode —
 | Freshness | During game windows, displayed scores/rosters no more than 15 minutes behind Sleeper; staleness always visible (FR-2.4). |
 | Reliability | A Sleeper outage or rate-limit never 500s the dashboard; cached reads + exponential-backoff retries in sync jobs. All Sleeper traffic originates from the backend under a shared budget of under 1,000 calls/minute per egress IP (player directory cached once per sport server-side). Limiter and cache design: [docs/TDD.md](/home/kathleen/code/LeagueLens/docs/TDD.md). |
 | Security | HTTPS everywhere; Firebase tokens verified on every request; user-scoped authorization in resolvers; credentials supplied only as environment variables, never committed to the repo (hard constraint, TDD Section 9); CSV uploads scanned for type/size (max 2 MB, `.csv` only) and stored privately. |
-| Privacy | LeagueLens stores the minimum needed: account identity, provider handles, and normalized fantasy data. No provider passwords are ever collected. Account deletion removes user data (FR-7.2). |
+| Privacy | LeagueLens stores the minimum needed: account identity, provider handles, and normalized fantasy data. No provider passwords are ever collected. Yahoo (post-M1, Section 6.4) stores per-user OAuth refresh tokens only — never Yahoo passwords — and disconnect/account deletion revokes and purges them (FR-1.4, FR-7.2). Account deletion removes user data (FR-7.2). |
 | Accessibility | WCAG 2.1 AA; full keyboard navigation; severity and sport never conveyed by color alone. |
 | Observability | Structured logs with request/sync correlation IDs to stdout; a sync-health view (internal) showing last run per provider. Hosted error reporting plugs in when cloud-hosted. |
 | Cost | MVP hosting cost $0: everything runs locally in Docker. Lifecycle rule deletes raw CSV uploads after 30 days. Any future cloud deployment needs an explicit budget decision first. |
@@ -368,7 +374,8 @@ This is a portfolio build, so "success" is measured on demo-ability and craft fi
 | Sleeper API changes or tightens rate limits | Sync breaks; dashboard goes stale | Adapter isolation (Section 6.2), server-side caching, contract tests against recorded payloads. |
 | Sleeper IP block from exceeding 1,000 calls/minute | All users' sync stops (budget is per egress IP, shared) | Backend-only Sleeper access, shared rate limiter with headroom, request deduping, throttled manual refresh (Section 6.3; design in [docs/TDD.md](/home/kathleen/code/LeagueLens/docs/TDD.md)). |
 | Monetization pressure conflicts with Sleeper's non-commercial terms | Legal/licensing exposure if LeagueLens charges while serving Sleeper data | No paid tier, billing, or ads without a Sleeper commercial license (Sections 3.2, 5.3, 6.3). |
-| Sleeper-league-only MVP underserves ESPN/Yahoo managers | Smaller addressable demo audience | CSV path gives those managers a working route on day one; ESPN/Yahoo adapters are designed-in (Section 6.4). |
+| Sleeper-league-only MVP underserves ESPN/Yahoo managers | Smaller addressable demo audience | CSV path gives those managers a working route on day one; Yahoo is the planned next provider (M5, post-M1) and ESPN stays designed-in only (Section 6.4). |
+| Yahoo OAuth/refresh-token upkeep leaks MVP focus or credentials (post-M1) | Delayed Sleeper slice; stored-token exposure | Yahoo is sequenced after M1 behind a spike + TDD TD-8 (encryption at rest, revoke/purge on disconnect/delete); config is optional so unconfigured installs store no tokens at all (Section 6.4). |
 | Injury-status data lags reality | Missed or wrong alerts erode trust | Conservative severity rules (Section 9), "last synced" transparency, manual CSV status overrides. |
 | Username-only Sleeper connect lets anyone view public leagues by guessing a handle | Privacy perception issues | Data is already public via Sleeper's API; LeagueLens accounts still gate who can attach a connection, and disconnect is one click. Document clearly in-app. |
 
@@ -399,6 +406,7 @@ This is a portfolio build, so "success" is measured on demo-ability and craft fi
 | **M2 — Alerts** | Alert engine (Section 9), dashboard flagging, preferences | Seeded injured-starter scenario produces a correct, resolving alert end to end (FR-6.x). |
 | **M3 — CSV leagues** | Template, upload/preview/validate, idempotent re-import, manual statuses | Offline league round-trips from template to dashboard (FR-5.x, FR-4.3). |
 | **M4 — Portfolio polish** | Seeded demo mode, landing page, README/architecture docs, Playwright pass | Public demo URL is shareable with no caveats (Section 15.1). |
+| **M5 — Yahoo provider (post-M1, not MVP)** | Spike first (Section 6.4), then per-user OAuth connect, token lifecycle (TDD TD-8), Yahoo adapter + sync, connect/reconnect/disabled UI states. May start once M1 exits; does not block M2–M4 or the Section 17.2 MVP definition of done. Numbered M5 to avoid renumbering M2–M4. | With Yahoo config present, a LeagueLens user connects their own Yahoo account and sees their Yahoo teams beside Sleeper/CSV teams; with config absent, Yahoo renders disabled and the rest of the app is unaffected. ESPN is not in this milestone. |
 
 ### 17.2 Definition of done (MVP)
 
@@ -447,6 +455,7 @@ Provider apps (Sleeper, ESPN, Yahoo) each show only their own leagues and alert 
 | 0.2 | 2026-11-20 | Provider and licensing findings: ESPN/Yahoo blockers detailed in Section 6.4 (both out of MVP); Sleeper non-commercial terms and 1,000 calls/minute rate limit recorded in Sections 3.2, 5.3, 6.3, 14, 16. GraphQL schema and rate-limit/cache design moved to [docs/TDD.md](/home/kathleen/code/LeagueLens/docs/TDD.md); Section 11 slimmed to a capability summary. |
 | 0.3 | 2026-11-20 | Frontend adopts MUI component library (React + Next.js). Credentials-as-env-vars hard constraint recorded (design in TDD Section 9). Data model (Section 10) and system architecture (Section 12) slimmed to summaries and moved to the TDD. Cloud deployment descoped from MVP after Google Cloud pricing review: MVP is local Docker Compose, cloud-ready/cloud-native by design with Kubernetes/Terraform as unapplied future artifacts (TDD Section 10). |
 | 0.4 | 2026-11-20 | OQ-4 closed: PostgreSQL + Prisma confirmed. Either/or stack choices resolved: Apollo Client, Vitest (Section 13). |
+| 0.5 | 2026-11-21 | Yahoo promoted ahead of ESPN: a registered Yahoo OAuth app now exists, clearing only the registration step in Section 6.4. Yahoo is planned as post-M1 milestone M5 (spike first, per-user OAuth for any LeagueLens user, optional config so unconfigured installs stay clean); ESPN remains deferred with no milestone. MVP Must scope and Section 17.2 definition of done unchanged. Yahoo env names added to `backend/.env.example` (optional, all-or-nothing). |
 
 
 

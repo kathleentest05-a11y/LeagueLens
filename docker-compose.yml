@@ -31,6 +31,10 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-leaguelens}:${POSTGRES_PASSWORD:-leaguelens-local-only}@db:5432/${POSTGRES_DB:-leaguelens}
       WEB_ORIGIN: http://localhost:3000
       UPLOAD_DIR: /data/uploads
+      # Optional Yahoo OAuth (post-M1, PRD Section 6.4); blank = Yahoo disabled.
+      YAHOO_CLIENT_ID: ${YAHOO_CLIENT_ID:-}
+      YAHOO_CLIENT_SECRET: ${YAHOO_CLIENT_SECRET:-}
+      YAHOO_REDIRECT_URI: ${YAHOO_REDIRECT_URI:-}
     volumes:
       - uploads:/data/uploads
     depends_on:
@@ -50,6 +54,10 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-leaguelens}:${POSTGRES_PASSWORD:-leaguelens-local-only}@db:5432/${POSTGRES_DB:-leaguelens}
       UPLOAD_DIR: /data/uploads
+      # Optional Yahoo OAuth (post-M1, PRD Section 6.4); blank = Yahoo disabled.
+      YAHOO_CLIENT_ID: ${YAHOO_CLIENT_ID:-}
+      YAHOO_CLIENT_SECRET: ${YAHOO_CLIENT_SECRET:-}
+      YAHOO_REDIRECT_URI: ${YAHOO_REDIRECT_URI:-}
     volumes:
       - uploads:/data/uploads
     depends_on:
