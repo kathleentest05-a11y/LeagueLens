@@ -1,7 +1,9 @@
 import type { ReactNode } from 'react';
 import type { Metadata } from 'next';
 import ApolloWrapper from '@/components/ApolloWrapper';
+import AppShell from '@/components/AppShell';
 import ThemeRegistry from '@/components/ThemeRegistry';
+import { ConnectionProvider } from '@/lib/ConnectionContext';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -14,7 +16,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html lang="en">
       <body>
         <ThemeRegistry>
-          <ApolloWrapper>{children}</ApolloWrapper>
+          <ApolloWrapper>
+            <ConnectionProvider>
+              <AppShell>{children}</AppShell>
+            </ConnectionProvider>
+          </ApolloWrapper>
         </ThemeRegistry>
       </body>
     </html>
