@@ -1,8 +1,20 @@
-// Prisma schema (TD-4 decided 2026-11-20).
-// M0 scaffold: datasource/generator only. The domain models from TDD
-// Section 6.1 (User, ProviderConnection, League, Team, Player,
-// RosterSlot, Matchup, Alert, CsvImport) land with the M1 schema build.
-// Provider IDs are strings; Sleeper IDs exceed JS safe integers (TDD 6.2).
+// Prisma schema (TD-4 decided 2026-11-20). Physical model for the
+// conceptual entities in TDD Section 6.1 (issue #3, M1).
+//
+// Conventions:
+// - Primary keys are LeagueLens cuids. Provider IDs live in `external*`
+//   string columns, never as PKs; Sleeper IDs exceed JS safe integers, so
+//   they are never parsed as numbers (TDD 6.2).
+// - Enum values are lowercase/snake_case to match the wire strings used by
+//   packages/shared and the frontend. Tables/columns map to snake_case.
+// - Identity rule (TDD 6.1): Sleeper identity is composed of
+//   League(connectionId, externalLeagueId) + Team(leagueId,
+//   externalRosterId). Postgres treats NULLs as distinct in unique
+//   indexes, so CSV rows (NULL external IDs) never collide there; the CSV
+//   identity and the one-open-alert rule (PRD Section 9) are partial
+//   unique indexes defined in the initial migration SQL only, because
+//   Prisma cannot express partial indexes. Do not let a future
+//   `prisma migrate dev` drop them as drift (see TDD 6.2).
 
 generator client {
   provider = "prisma-client-js"
@@ -11,4 +23,353 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+enum Sport {
+  nfl
+  nba
+
+  @@map("sport")
+}
+
+enum Provider {
+  sleeper
+  csv
+
+  @@map("provider")
+}
+
+enum ConnectionStatus {
+  connected
+  syncing
+  error
+
+  @@map("connection_status")
+}
+
+enum SlotType {
+  starter
+  bench
+  ir
+
+  @@map("slot_type")
+}
+
+enum InjuryStatus {
+  healthy
+  questionable
+  doubtful
+  out
+  ir
+
+  @@map("injury_status")
+}
+
+enum StatusSource {
+  sleeper
+  csv
+  manual
+
+  @@map("status_source")
+}
+
+enum MatchupState {
+  pre
+  live
+  final
+
+  @@map("matchup_state")
+}
+
+enum AlertType {
+  injured_starter
+  bye_week_starter
+  empty_starter_slot
+  lineup_lock_approaching
+  questionable_starter
+  sync_stale
+
+  @@map("alert_type")
+}
+
+enum AlertSeverity {
+  low
+  medium
+  high
+  critical
+
+  @@map("alert_severity")
+}
+
+enum AlertStatus {
+  open
+  acknowledged
+  resolved
+
+  @@map("alert_status")
+}
+
+enum CsvImportStatus {
+  preview
+  confirmed
+  failed
+
+  @@map("csv_import_status")
+}
+
+/// LeagueLens account. Firebase Auth identity (FR-1.1); the seeded demo
+/// user (FR-1.3) is a row with authProvider "demo" and no firebaseUid.
+model User {
+  id           String  @id @default(cuid())
+  firebaseUid  String? @unique @map("firebase_uid")
+  email        String  @unique
+  displayName  String? @map("display_name")
+  authProvider String  @default("firebase") @map("auth_provider")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  connections ProviderConnection[]
+  alerts      Alert[]
+  csvImports  CsvImport[]
+
+  @@map("users")
+}
+
+/// One row per connected provider account or CSV source. For Sleeper,
+/// externalUserId is the resolved `user_id` and handle is the username at
+/// connect time (lookup-only afterwards, TDD 3.1). M1 ships `sleeper` and
+/// `csv` only; Yahoo widens Provider in its own M5 migration (TD-8).
+model ProviderConnection {
+  id             String           @id @default(cuid())
+  userId         String           @map("user_id")
+  provider       Provider
+  externalUserId String?          @map("external_user_id")
+  handle         String
+  status         ConnectionStatus @default(connected)
+  lastSyncAt     DateTime?        @map("last_sync_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  leagues League[]
+
+  @@unique([userId, provider, externalUserId])
+  @@index([userId])
+  @@map("provider_connections")
+}
+
+/// A normalized league under one connection. The same Sleeper league
+/// synced by two LeagueLens users is two rows (identity includes the
+/// connection); fetch deduping is a sync-layer concern (TDD 4.3).
+/// `source` mirrors connection.provider for filtering/labeling (FR-3.3,
+/// FR-4.3). scoringSettings holds the provider settings JSON (scoring +
+/// roster positions) and is null for CSV leagues.
+model League {
+  id               String    @id @default(cuid())
+  connectionId     String    @map("connection_id")
+  externalLeagueId String?   @map("external_league_id")
+  name             String
+  sport            Sport
+  season           String
+  source           Provider
+  scoringSettings  Json?     @map("scoring_settings")
+  currentWeek      Int       @default(1) @map("current_week")
+  totalTeams       Int       @default(0) @map("total_teams")
+  lastSyncAt       DateTime? @map("last_sync_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  connection ProviderConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  teams      Team[]
+  matchups   Matchup[]
+  csvImports CsvImport[]
+
+  // Sleeper league identity. CSV identity (connectionId, name, sport,
+  // season) is a partial unique index in the migration (TDD 6.2).
+  @@unique([connectionId, externalLeagueId])
+  @@index([connectionId])
+  @@index([sport, season])
+  @@map("leagues")
+}
+
+/// A fantasy team in a league. Every roster in the league is stored
+/// (standings/matchups need opponents); the connection owner's own team —
+/// Sleeper roster whose owner_id matches the connection's externalUserId
+/// — is flagged isMine. Adapters guarantee non-null names (falling back
+/// to owner display name when a provider team name is unset).
+model Team {
+  id               String  @id @default(cuid())
+  leagueId         String  @map("league_id")
+  externalRosterId String? @map("external_roster_id")
+  externalOwnerId  String? @map("external_owner_id")
+  teamName         String  @map("team_name")
+  ownerName        String  @map("owner_name")
+  isMine           Boolean @default(false) @map("is_mine")
+  wins             Int     @default(0)
+  losses           Int     @default(0)
+  ties             Int     @default(0)
+  pointsFor        Float   @default(0) @map("points_for")
+  pointsAgainst    Float   @default(0) @map("points_against")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  league       League       @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  rosterSlots  RosterSlot[]
+  alerts       Alert[]
+  homeMatchups Matchup[]    @relation("MatchupHomeTeam")
+  awayMatchups Matchup[]    @relation("MatchupAwayTeam")
+
+  // Sleeper team identity (with League's unique, this composes to
+  // (connectionId, externalLeagueId, externalRosterId)). CSV identity
+  // (leagueId, teamName) is a partial unique index in the migration.
+  @@unique([leagueId, externalRosterId])
+  @@index([leagueId])
+  @@index([leagueId, isMine])
+  @@map("teams")
+}
+
+/// Player directory entity shared across leagues, refreshed daily from
+/// Sleeper (TDD 4.2). CSV-imported players have no external ID until the
+/// importer matches them to the directory (PRD Appendix A); the unique
+/// below leaves NULL external IDs distinct. position/proTeam stay plain
+/// strings: position codes are sport-specific and open-ended.
+model Player {
+  id               String       @id @default(cuid())
+  sport            Sport
+  externalPlayerId String?      @map("external_player_id")
+  fullName         String       @map("full_name")
+  position         String
+  proTeam          String?      @map("pro_team")
+  byeWeek          Int?         @map("bye_week")
+  injuryStatus     InjuryStatus @default(healthy) @map("injury_status")
+  statusSource     StatusSource @default(sleeper) @map("status_source")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  rosterSlots RosterSlot[]
+  alerts      Alert[]
+
+  @@unique([sport, externalPlayerId])
+  @@index([sport, fullName])
+  @@map("players")
+}
+
+/// Join of Team <-> Player with lineup role. A null playerId is an empty
+/// required starter slot (Sleeper encodes these in its starters array);
+/// slotPosition/slotIndex preserve the league's roster-position order so
+/// empty slots keep their identity. Sync reconciles rows to the current
+/// roster (alert history hangs off Team/Player, not slots).
+model RosterSlot {
+  id           String   @id @default(cuid())
+  teamId       String   @map("team_id")
+  playerId     String?  @map("player_id")
+  slotType     SlotType @map("slot_type")
+  slotPosition String   @map("slot_position")
+  slotIndex    Int      @default(0) @map("slot_index")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  team   Team    @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  player Player? @relation(fields: [playerId], references: [id], onDelete: SetNull)
+
+  // A player appears once per team (CSV validation, FR-5.2, relies on
+  // this too); empty slots (NULL playerId) are exempt.
+  @@unique([teamId, playerId])
+  @@index([teamId])
+  @@index([playerId])
+  @@map("roster_slots")
+}
+
+/// One week's pairing. Sleeper has no home/away; the adapter assigns the
+/// two sides deterministically from its matchup pairing (kept in
+/// externalMatchupId as a string like every provider ID). awayTeam is
+/// null for a bye; scores are null pre-game and for CSV leagues.
+model Matchup {
+  id                String       @id @default(cuid())
+  leagueId          String       @map("league_id")
+  week              Int
+  externalMatchupId String?      @map("external_matchup_id")
+  homeTeamId        String       @map("home_team_id")
+  awayTeamId        String?      @map("away_team_id")
+  homeScore         Float?       @map("home_score")
+  awayScore         Float?       @map("away_score")
+  state             MatchupState @default(pre)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  league   League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  homeTeam Team   @relation("MatchupHomeTeam", fields: [homeTeamId], references: [id], onDelete: Cascade)
+  awayTeam Team?  @relation("MatchupAwayTeam", fields: [awayTeamId], references: [id], onDelete: Cascade)
+
+  @@unique([leagueId, week, externalMatchupId])
+  @@index([leagueId, week])
+  @@index([homeTeamId])
+  @@index([awayTeamId])
+  @@map("matchups")
+}
+
+/// First-class alert record (PRD Section 9): open -> acknowledged ->
+/// resolved, auto-resolved when the condition clears. playerId is null
+/// for slot/team-level alerts (empty slot, lock, sync stale);
+/// slotPosition identifies the slot for empty-slot alerts. The
+/// one-open-alert-per-(team, type, player/slot) rule is a partial unique
+/// index in the migration. userId denormalizes the team owner (via the
+/// league's connection) for the dashboard/alert-feed path.
+model Alert {
+  id             String        @id @default(cuid())
+  userId         String        @map("user_id")
+  teamId         String        @map("team_id")
+  type           AlertType
+  severity       AlertSeverity
+  playerId       String?       @map("player_id")
+  slotPosition   String?       @map("slot_position")
+  message        String
+  status         AlertStatus   @default(open)
+  acknowledgedAt DateTime?     @map("acknowledged_at")
+  resolvedAt     DateTime?     @map("resolved_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team   Team    @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  player Player? @relation(fields: [playerId], references: [id], onDelete: SetNull)
+
+  @@index([userId, status])
+  @@index([teamId, status])
+  @@map("alerts")
+}
+
+/// Audit trail for CSV imports (M3); also the preview -> confirm handle
+/// (previewCsvImport creates a `preview` row with validation results,
+/// confirmCsvImport attaches leagueId and stamps importedAt). League is
+/// SetNull so the audit row survives a league delete; account deletion
+/// still removes it via the user cascade (FR-7.2).
+model CsvImport {
+  id               String          @id @default(cuid())
+  userId           String          @map("user_id")
+  leagueId         String?         @map("league_id")
+  fileName         String          @map("file_name")
+  status           CsvImportStatus @default(preview)
+  rowCount         Int             @default(0) @map("row_count")
+  errorCount       Int             @default(0) @map("error_count")
+  validationErrors Json?           @map("validation_errors")
+  importedAt       DateTime?       @map("imported_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  league League? @relation(fields: [leagueId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([leagueId])
+  @@map("csv_imports")
 }

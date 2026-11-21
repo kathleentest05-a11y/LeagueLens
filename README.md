@@ -8,9 +8,10 @@ its public read-only API, offline leagues via CSV import) into one dashboard
 with cross-league alerts for injured/bye-week starters and approaching
 lineup locks. It is read-only: it never writes back to a provider.
 
-> Status: M0 scaffold. The app skeleton runs end to end (Next.js web,
-> GraphQL API, sync-worker process, Postgres); product features land in
-> M1+ per the roadmap in [docs/PRD.md](docs/PRD.md).
+> Status: M1 in progress. The frontend surfaces (dashboard, team detail,
+> onboarding, settings) run on mock data, and the normalized Postgres
+> schema (Prisma) has landed; Sleeper auth/sync/API wiring is the rest of
+> M1 per the roadmap in [docs/PRD.md](docs/PRD.md).
 
 ## Docs
 
@@ -39,6 +40,7 @@ npm install
 docker compose up db          # Postgres only (add --profile redis for Redis)
 cp backend/.env.example backend/.env.local
 cp frontend/.env.example frontend/.env.local
+npm run db:migrate -w @leaguelens/backend   # apply Prisma migrations
 npm run dev                   # web :3000, api :4000, worker
 ```
 
@@ -75,6 +77,8 @@ npm run typecheck    # TypeScript across workspaces
 npm run lint         # ESLint across workspaces
 npm run test         # Vitest across workspaces
 npm run codegen      # regenerate GraphQL types into packages/shared
+npm run db:migrate -w @leaguelens/backend          # create/apply migrations (dev)
+npm run db:migrate:deploy -w @leaguelens/backend   # apply migrations (built image / CI)
 ```
 
 ## Layout

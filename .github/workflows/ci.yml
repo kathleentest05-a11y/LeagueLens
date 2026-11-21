@@ -8,6 +8,20 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    # Postgres backs the Prisma integration test (issue #3): it applies
+    # migrations to leaguelens_test and proves the identity-rule upserts.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: leaguelens_test
+          POSTGRES_USER: leaguelens
+          POSTGRES_PASSWORD: leaguelens-local-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U leaguelens -d leaguelens_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -18,9 +32,14 @@ jobs:
       - run: npm run codegen
       # Schema-first drift check: generated types must match the committed SDL.
       - run: git diff --exit-code packages/shared/src/generated
+      - run: npm run db:validate -w @leaguelens/backend
+        env:
+          DATABASE_URL: postgres://leaguelens:leaguelens-local-only@localhost:5432/leaguelens_test
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run test
+        env:
+          TEST_DATABASE_URL: postgres://leaguelens:leaguelens-local-only@localhost:5432/leaguelens_test
       - run: npm run build
 
   compose-smoke:

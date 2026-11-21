@@ -13,7 +13,7 @@ backend/           @leaguelens/backend — one package, two entrypoints:
   src/api/           GraphQL API (Apollo Server on Express)
   src/worker/        sync worker (the only provider caller)
   src/shared/        backend-shared code (config; later data layer/adapters/alerts)
-  prisma/            Prisma schema (models land in M1)
+  prisma/            Prisma schema + migrations (TDD Section 6)
 packages/shared/   @leaguelens/shared — TS types/constants + generated GraphQL types
 docs/              PRD.md, TDD.md
 ```
@@ -29,6 +29,7 @@ npm run typecheck           # tsc across workspaces
 npm run lint                # ESLint across workspaces
 npm run test                # Vitest across workspaces
 npm run codegen             # regenerate packages/shared/src/generated from the SDL
+npm run db:migrate -w @leaguelens/backend   # create/apply Prisma migrations (needs Postgres up; explicit step, TDD 10.1)
 npm run format              # Prettier (code files; PRD/TDD excluded)
 ```
 

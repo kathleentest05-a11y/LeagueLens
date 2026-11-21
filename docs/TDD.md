@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Product | LeagueLens |
-| Document status | Draft v0.5 |
+| Document status | Draft v0.7 |
 | Last updated | 2026-11-21 |
 | Owner | Kathleen |
 | Companion doc | [docs/PRD.md](/home/kathleen/code/LeagueLens/docs/PRD.md) |
@@ -232,22 +232,25 @@ Provider payloads are normalized into these entities; provider-specific IDs are 
 
 | Entity | Key fields | Notes |
 | --- | --- | --- |
-| `User` | id, email, displayName, authProvider | LeagueLens account (Firebase Auth identity). |
+| `User` | id, firebaseUid?, email, displayName, authProvider | LeagueLens account (Firebase Auth identity). `firebaseUid` is the auth upsert key; the seeded demo user has none (`authProvider` = `demo`). |
 | `ProviderConnection` | id, userId, provider (`sleeper` \| `csv`), externalUserId, handle, status, lastSyncAt | One row per connected provider or CSV source. M1 ships `sleeper` \| `csv` only; the M5 Yahoo migration adds `yahoo` plus its token storage as decided in TD-8 — do not widen the M1 schema preemptively. |
-| `League` | id, connectionId, externalLeagueId?, name, sport, season, scoringSettings (JSON), source | `source` mirrors the provider for filtering and labeling. |
-| `Team` | id, leagueId, externalRosterId?, ownerName, teamName, wins, losses, ties, pointsFor | The user's own team is flagged `isMine`. |
+| `League` | id, connectionId, externalLeagueId?, name, sport, season, scoringSettings (JSON), source, currentWeek, totalTeams, lastSyncAt | `source` mirrors the provider for filtering and labeling. `lastSyncAt` is per-league because staleness is badged per league (FR-2.4); the connection keeps its own roll-up. |
+| `Team` | id, leagueId, externalRosterId?, externalOwnerId?, ownerName, teamName, isMine, wins, losses, ties, pointsFor, pointsAgainst | Every roster in the league is stored (standings/matchups need opponents); the connection owner's team is flagged `isMine` (Sleeper roster whose `owner_id` matches, kept in externalOwnerId). |
 | `Player` | id, sport, externalPlayerId?, fullName, position, proTeam, byeWeek, injuryStatus, statusSource | Directory entity shared across leagues; refreshed daily from Sleeper. |
-| `RosterSlot` | id, teamId, playerId, slotType (`starter` \| `bench` \| `ir`), slotPosition | Join of Team ↔ Player with lineup role. |
-| `Matchup` | id, leagueId, week, homeTeamId, awayTeamId, homeScore, awayScore, state | Scores nullable for CSV leagues. |
-| `Alert` | id, userId, teamId, type, severity, playerId?, message, status, createdAt, resolvedAt | See PRD Section 9 for lifecycle. |
-| `CsvImport` | id, userId, leagueId, fileName, rowCount, errorCount, importedAt | Audit trail for imports; powers idempotent re-import. |
+| `RosterSlot` | id, teamId, playerId?, slotType (`starter` \| `bench` \| `ir`), slotPosition, slotIndex | Join of Team ↔ Player with lineup role. Null `playerId` is an empty required starter slot; `slotIndex` preserves roster-position order. |
+| `Matchup` | id, leagueId, week, externalMatchupId?, homeTeamId, awayTeamId?, homeScore, awayScore, state | Scores nullable for CSV leagues and pre-game; `awayTeamId` null on a bye. Sleeper has no home/away — the adapter assigns sides deterministically from its pairing. |
+| `Alert` | id, userId, teamId, type, severity, playerId?, slotPosition?, message, status, createdAt, acknowledgedAt, resolvedAt | See PRD Section 9 for lifecycle. `userId` denormalizes the team owner for the alert-feed path. |
+| `CsvImport` | id, userId, leagueId?, fileName, status (`preview` \| `confirmed` \| `failed`), rowCount, errorCount, validationErrors (JSON), importedAt? | Audit trail for imports and the preview → confirm handle; powers idempotent re-import. |
 
-**Identity rule:** two teams are the same team if and only if they share `(connectionId, externalLeagueId, externalRosterId)` — for CSV, `(userId, leagueName, sport, season, teamName)`. Syncs upsert on this identity; they never delete-then-recreate, so alert history survives refreshes.
+**Identity rule:** two teams are the same team if and only if they share `(connectionId, externalLeagueId, externalRosterId)` — for CSV, `(userId, leagueName, sport, season, teamName)`. Syncs upsert on this identity; they never delete-then-recreate, so alert history survives refreshes. Physically (Section 6.2), the Sleeper tuple is composed of `League(connectionId, externalLeagueId)` + `Team(leagueId, externalRosterId)` unique constraints, and the CSV tuple of partial unique indexes, so no identity columns are denormalized onto Team.
 
 ### 6.2 Storage implementation notes
 
-- Provider IDs (`externalLeagueId`, `externalRosterId`, `externalPlayerId`, Sleeper `user_id`) are stored as strings. Sleeper IDs exceed JavaScript's safe integer range; never parse them as numbers.
+- Provider IDs (`externalLeagueId`, `externalRosterId`, `externalPlayerId`, `externalMatchupId`, Sleeper `user_id`) are stored as strings. Sleeper IDs exceed JavaScript's safe integer range; never parse them as numbers.
 - Migrations own the physical schema (Prisma; decided 2026-11-20, TD-4). Index the dashboard path: teams by user/connection, roster slots by team, alerts by user/status, players by sport and external ID.
+- Physical schema as landed (issue #3, 2026-11-21): cuid primary keys; snake_case tables/columns via Prisma `@@map`/`@map`; closed value sets are Postgres enums whose values match the `packages/shared`/frontend wire strings (`nfl`, `injured_starter`, …). Parent deletes cascade (connection → leagues → teams/slots/matchups, user → connections/alerts/imports) so disconnect and account deletion remove cached data (FR-1.4, FR-7.2); `Player` relations are `SetNull` so the shared directory and alert history survive. CSV identity compares names as stored — importers must trim before writing (M3).
+- **Partial unique indexes live only in migration SQL.** Postgres treats NULLs as distinct in unique indexes, so the CSV identity (`leagues_csv_identity_key`, `teams_csv_identity_key`) and the one-open-alert rule (`alerts_one_open_per_team_type_player_slot_key`, PRD Section 9) are partial/expression unique indexes appended to the initial migration; Prisma cannot express them in `schema.prisma`. A future `prisma migrate dev` will see them as drift and propose dropping them — remove those drops from the generated migration instead of accepting them.
+- `prisma generate` runs as part of backend `build`/`typecheck`/`test` (the generated client lives in `node_modules`, never committed). Migrations are always an explicit step (Section 10.1): `npm run db:migrate -w @leaguelens/backend` in dev, `db:migrate:deploy` against a built image / in Compose via `docker compose run --rm api npm run db:migrate:deploy -w @leaguelens/backend`. The `prisma` CLI is therefore a backend runtime dependency, not a devDependency. Backend code gets the client from `backend/src/shared/db.ts` (lazy singleton).
 - Raw provider payloads may be retained briefly for contract tests and debugging, with a lifecycle rule. They are never served to the client.
 
 ## 7. Open technical decisions
@@ -265,6 +268,7 @@ Provider payloads are normalized into these entities; provider-specific IDs are 
 
 ## 8. Testing notes
 
+- Identity-rule integration test (`backend/src/shared/db.integration.test.ts`, issue #3): gated on `TEST_DATABASE_URL` pointing at a dedicated `*test*` database (refused otherwise), it applies migrations itself and proves Sleeper league/team/player upserts update one row, the CSV partial uniques reject duplicates without constraining Sleeper rows, one open alert per (team, type, player/slot), and disconnect cascades. CI runs it against a Postgres service container; locally it is skipped unless the variable is set.
 - Contract tests replay recorded Sleeper payloads (including `null`-body responses) through the adapter without network access. The M5 Yahoo adapter gets the same treatment, plus token-refresh/revoked-consent tests with a fake Yahoo token endpoint — tests never need a real client secret.
 - Limiter tests prove the client wrapper cannot exceed its budget under concurrent load and that deduping collapses identical in-flight calls.
 - Sync idempotency tests run the same league bundle twice and assert one set of entities and no duplicate open alerts.
@@ -408,3 +412,4 @@ Both modes must keep working; a change that only works in one is incomplete.
 | 0.4 | 2026-11-20 | M0 tooling decided: SDL-first GraphQL with codegen into `packages/shared` (TD-3), Prisma (TD-4), Apollo Client, Vitest, ESLint + Prettier, Tailwind retained (utilities only; MUI CssBaseline is the single reset, Section 1.1). Node pinned via `.nvmrc`. |
 | 0.5 | 2026-11-21 | Yahoo planned post-M1 ahead of ESPN (PRD v0.5): optional all-or-nothing `YAHOO_*` config landed in `backend/src/shared/config.ts` + `backend/.env.example` with Compose pass-through to api/worker (Section 9.3); anticipated Yahoo OAuth callback carved out of the no-provider-passthrough rules (Sections 1, 2.2) strictly as designed in new TD-8; `ProviderConnection` stays `sleeper` \| `csv` for M1 (Section 6.1). No Yahoo network code yet. |
 | 0.6 | 2026-11-21 | M0 exit verification (issue #1) found the README's `backend/.env.local` step was a no-op — nothing loaded the file. Backend now loads `backend/.env.local` then `backend/.env` via `dotenv` at both entrypoints (`backend/src/shared/env.ts`, real environment wins, missing files no-op in Docker); TD-5 marked done and Section 9.5 updated from deferred to done; README configuration wording corrected (root example copies to `.env`, not `.env.local`). |
+| 0.7 | 2026-11-21 | Prisma physical model landed (issue #3): all nine Section 6.1 entities in `backend/prisma/schema.prisma` + initial migration. Section 6.1 key fields updated to as-built (User.firebaseUid, League currentWeek/totalTeams/lastSyncAt, Team externalOwnerId/pointsAgainst, RosterSlot nullable player = empty slot + slotIndex, Matchup externalMatchupId/nullable away team, Alert slotPosition/acknowledgedAt, CsvImport preview status). Section 6.2 records the encoding: Sleeper identity composed of League+Team uniques, CSV identity and one-open-alert rule as partial unique indexes in migration SQL only, cuid PKs, snake_case maps, wire-matching enums, `prisma generate` wired into backend build/typecheck/test, `prisma` CLI as a runtime dependency for explicit `migrate deploy`, and the `TEST_DATABASE_URL`-gated identity integration test (Section 8). Header version aligned to this change log (was stale at v0.5). |
