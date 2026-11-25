@@ -6,12 +6,32 @@ import cors from 'cors';
 import express from 'express';
 import { loadConfig } from '../shared/config';
 import { loadEnvFiles } from '../shared/env';
+import { getPrismaClient } from '../shared/db';
 import { resolvers } from './resolvers';
+import { createGraphQLContext, type ContextFactoryDeps } from './context';
+import { StubTokenVerifier } from './auth';
+import { StubSleeperAdapter } from './sleeper-adapter';
+import { InMemoryRateLimiter } from './rate-limiter';
 
 async function main(): Promise<void> {
   loadEnvFiles();
   const config = loadConfig();
   const typeDefs = readFileSync(join(__dirname, 'schema.graphql'), 'utf-8');
+
+  // Initialize dependencies
+  const prisma = getPrismaClient();
+  const tokenVerifier = new StubTokenVerifier();
+  const sleeperAdapter = new StubSleeperAdapter();
+  const leagueRefreshLimiter = new InMemoryRateLimiter(300); // 5 minutes
+  const connectSleeperLimiter = new InMemoryRateLimiter(600); // 10 minutes
+
+  const contextDeps: ContextFactoryDeps = {
+    prisma,
+    tokenVerifier,
+    sleeperAdapter,
+    leagueRefreshLimiter,
+    connectSleeperLimiter,
+  };
 
   const app = express();
   app.get('/healthz', (_req, res) => {
@@ -21,13 +41,18 @@ async function main(): Promise<void> {
     res.json({ status: 'ready' });
   });
 
-  const server = new ApolloServer({ typeDefs, resolvers });
+  const server = new ApolloServer({
+    typeDefs,
+    resolvers,
+  });
   await server.start();
   app.use(
     '/graphql',
     cors({ origin: config.webOrigin }),
     express.json(),
-    expressMiddleware(server),
+    expressMiddleware(server, {
+      context: async ({ req }) => createGraphQLContext(req, contextDeps),
+    }),
   );
 
   const httpServer = app.listen(config.port, () => {
@@ -36,6 +61,7 @@ async function main(): Promise<void> {
 
   const shutdown = async () => {
     await server.stop();
+    await prisma.$disconnect();
     httpServer.close(() => process.exit(0));
   };
   process.on('SIGTERM', shutdown);

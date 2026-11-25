@@ -170,3 +170,7 @@ backend/src/generated/
 .eden/
 .hg/
 .sl/
+
+.opencode/
+opencode.json
+problem.txt

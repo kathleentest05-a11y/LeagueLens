@@ -1,13 +1,228 @@
 # Authoritative GraphQL schema (SDL-first, TDD TD-3).
-# M0 scaffold only; the domain schema from TDD Section 2.1 lands with M1.
+# M1 domain schema per TDD Section 2.1.
 
+# Scalar types
+scalar DateTime
+scalar JSON
+
+# Input types
+input DashboardFilter {
+  sport: Sport
+  status: ConnectionStatus
+}
+
+input AlertPreferencesInput {
+  enableEmail: Boolean
+  enablePush: Boolean
+}
+
+# Enums
+enum Sport {
+  nfl
+  nba
+}
+
+enum Provider {
+  sleeper
+  csv
+}
+
+enum ConnectionStatus {
+  connected
+  syncing
+  error
+}
+
+enum SlotType {
+  starter
+  bench
+  ir
+}
+
+enum InjuryStatus {
+  healthy
+  questionable
+  doubtful
+  out
+  ir
+}
+
+enum MatchupState {
+  pre
+  live
+  final
+}
+
+enum AlertType {
+  injured_starter
+  bye_week_starter
+  empty_starter_slot
+  lineup_lock_approaching
+  questionable_starter
+  sync_stale
+}
+
+enum AlertSeverity {
+  low
+  medium
+  high
+  critical
+}
+
+enum AlertStatus {
+  open
+  acknowledged
+  resolved
+}
+
+# Main types
+type User {
+  id: ID!
+  email: String!
+  displayName: String
+  createdAt: DateTime!
+  connections: [ProviderConnection!]!
+}
+
+type ProviderConnection {
+  id: ID!
+  provider: Provider!
+  handle: String!
+  status: ConnectionStatus!
+  lastSyncAt: DateTime
+  createdAt: DateTime!
+  leagues: [League!]!
+}
+
+type League {
+  id: ID!
+  name: String!
+  sport: Sport!
+  season: String!
+  source: Provider!
+  currentWeek: Int!
+  totalTeams: Int!
+  lastSyncAt: DateTime
+  teams: [Team!]!
+}
+
+type Team {
+  id: ID!
+  teamName: String!
+  ownerName: String!
+  isMine: Boolean!
+  wins: Int!
+  losses: Int!
+  ties: Int!
+  pointsFor: Float!
+  pointsAgainst: Float!
+  rosterSlots: [RosterSlot!]!
+  alerts: [Alert!]!
+}
+
+type Player {
+  id: ID!
+  fullName: String!
+  position: String!
+  proTeam: String
+  byeWeek: Int
+  injuryStatus: InjuryStatus!
+  sport: Sport!
+}
+
+type RosterSlot {
+  id: ID!
+  slotType: SlotType!
+  slotPosition: String!
+  player: Player
+}
+
+type Matchup {
+  id: ID!
+  week: Int!
+  homeTeam: Team!
+  awayTeam: Team
+  homeScore: Float
+  awayScore: Float
+  state: MatchupState!
+}
+
+type Alert {
+  id: ID!
+  type: AlertType!
+  severity: AlertSeverity!
+  message: String!
+  status: AlertStatus!
+  player: Player
+  slotPosition: String
+  createdAt: DateTime!
+  acknowledgedAt: DateTime
+  resolvedAt: DateTime
+}
+
+# Dashboard types (shaped around screens)
+type Dashboard {
+  teams: [TeamCard!]!
+  openAlertCount: Int!
+  lastSyncedAt: DateTime
+}
+
+type TeamCard {
+  team: Team!
+  league: League!
+  matchup: Matchup
+  alerts: [Alert!]!
+  syncState: SyncState!
+}
+
+type SyncState {
+  isStale: Boolean!
+  lastSyncAt: DateTime
+  canRefresh: Boolean!
+  refreshCooldownSeconds: Int
+}
+
+# Team detail types
+type TeamDetail {
+  team: Team!
+  league: League!
+  matchup: Matchup
+  recentMatchups: [Matchup!]!
+  standings: [Team!]!
+}
+
+# Sync result
+type SyncResult {
+  success: Boolean!
+  message: String!
+  syncState: SyncState!
+}
+
+# Health check (retained from M0)
 type Health {
   status: String!
   service: String!
   version: String!
 }
 
+# Queries
 type Query {
-  hello: String!
+  # Health (M0)
   health: Health!
+  
+  # Domain queries (M1)
+  me: User
+  dashboard(filter: DashboardFilter): Dashboard!
+  team(id: ID!): TeamDetail
+  alerts(status: AlertStatus): [Alert!]!
+}
+
+# Mutations
+type Mutation {
+  connectSleeper(username: String!): ProviderConnection!
+  disconnectProvider(connectionId: ID!): Boolean!
+  refreshLeague(leagueId: ID!): SyncResult!
+  deleteLeague(leagueId: ID!): Boolean!
+  acknowledgeAlert(alertId: ID!): Alert!
+  updateAlertPreferences(input: AlertPreferencesInput!): User!
 }
